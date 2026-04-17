@@ -2410,13 +2410,54 @@ const PinLogin = ({ onLogin, onNewUser }) => {
   const [selectedProfile, setSelectedProfile] = useState(null);
   const [pin, setPin] = useState(["", "", "", ""]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const pinRefs = [useRef(null), useRef(null), useRef(null), useRef(null)];
 
   useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem("neuralProfiles") || "[]");
-      setProfiles(stored.filter(p => p.pin));
-    } catch (e) {}
+    async function loadProfiles() {
+      // 1. Load from localStorage
+      let localProfiles = [];
+      try {
+        localProfiles = JSON.parse(localStorage.getItem("neuralProfiles") || "[]").filter(p => p.pin);
+      } catch (e) {}
+
+      // 2. Also load from Supabase
+      let supabaseProfiles = [];
+      try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/salespeople?select=id,name,pin,disc_type,disc_secondary,disc_scores,disc_answers,disc_slow_questions,disc_answer_changes,radar_data,avatar_color`, {
+          headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          supabaseProfiles = (data || []).filter(p => p.pin).map(p => ({
+            name: p.name,
+            pin: p.pin,
+            dominant: p.disc_type,
+            secondary: p.disc_secondary,
+            discType: p.disc_type,
+            scores: p.disc_scores,
+            aspectScores: p.disc_scores,
+            answers: p.disc_answers,
+            slowQuestions: p.disc_slow_questions,
+            answerChanges: p.disc_answer_changes,
+            radarData: p.radar_data,
+            supabaseId: p.id,
+            _fromSupabase: true
+          }));
+        }
+      } catch (e) { console.warn("Could not load from Supabase:", e); }
+
+      // 3. Merge: Supabase profiles take priority, add local-only profiles
+      const merged = [...supabaseProfiles];
+      for (const lp of localProfiles) {
+        if (!merged.some(sp => sp.name === lp.name)) {
+          merged.push(lp);
+        }
+      }
+      setProfiles(merged);
+      setLoading(false);
+    }
+    loadProfiles();
   }, []);
 
   const handlePinInput = (idx, val) => {
@@ -2432,12 +2473,39 @@ const PinLogin = ({ onLogin, onNewUser }) => {
       const code = newPin.join("");
       const match = profiles.find(p => p.name === selectedProfile?.name && p.pin === code);
       if (match) {
-        // Load full profile from salj_profile if name matches, else build from neuralProfiles
-        try {
-          const savedProfile = JSON.parse(localStorage.getItem("salj_profile"));
-          if (savedProfile?.name === match.name) { onLogin(savedProfile); return; }
-        } catch(e){}
-        onLogin({ name: match.name, discType: match.dominant, secondary: match.secondary, scores: match.scores, aspectScores: match.aspectScores, totalTime: match.totalTime, avgTime: match.avgTime, slowQuestions: match.slowQuestions, totalChanges: match.totalChanges, consistencyScore: match.consistencyScore, answers: match.answers, times: match.times, pin: match.pin, timestamp: match.timestamp });
+        // If match is from Supabase, build the right profile object
+        if (match._fromSupabase) {
+          const sbProfile = {
+            name: match.name,
+            discType: match.discType || match.dominant,
+            secondaryType: match.secondary,
+            scores: match.scores,
+            aspectScores: match.aspectScores,
+            answers: match.answers,
+            slowQuestions: match.slowQuestions,
+            answerChanges: match.answerChanges,
+            radarData: match.radarData,
+            pin: match.pin,
+            supabaseId: match.supabaseId
+          };
+          // Persist to localStorage for next time
+          localStorage.setItem("salj_profile", JSON.stringify(sbProfile));
+          try {
+            const all = JSON.parse(localStorage.getItem("neuralProfiles") || "[]");
+            if (!all.some(p => p.name === match.name)) {
+              all.push({ name: match.name, dominant: match.dominant, secondary: match.secondary, scores: match.scores, aspectScores: match.aspectScores, pin: match.pin, supabaseId: match.supabaseId });
+              localStorage.setItem("neuralProfiles", JSON.stringify(all));
+            }
+          } catch(e){}
+          onLogin(sbProfile);
+        } else {
+          // Local profile match
+          try {
+            const savedProfile = JSON.parse(localStorage.getItem("salj_profile"));
+            if (savedProfile?.name === match.name) { onLogin(savedProfile); return; }
+          } catch(e){}
+          onLogin({ name: match.name, discType: match.dominant, secondary: match.secondary, scores: match.scores, aspectScores: match.aspectScores, totalTime: match.totalTime, avgTime: match.avgTime, slowQuestions: match.slowQuestions, totalChanges: match.totalChanges, consistencyScore: match.consistencyScore, answers: match.answers, times: match.times, pin: match.pin, timestamp: match.timestamp });
+        }
       } else {
         setError("Fel pinkod");
         setPin(["", "", "", ""]);
@@ -2451,6 +2519,19 @@ const PinLogin = ({ onLogin, onNewUser }) => {
       pinRefs[idx - 1].current?.focus();
     }
   };
+
+  // Loading state while fetching from Supabase
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4" style={{ background: "linear-gradient(180deg, #000814 0%, #001D3D 50%, #000814 100%)" }}>
+        <div className="max-w-lg w-full text-center">
+          <div className="text-xs tracking-widest mb-4" style={{ color: "#00D9FF" }}>▸ PROFFSKONTAKT ACADEMY</div>
+          <h1 className="text-3xl font-black text-white mb-3">Säljträning</h1>
+          <p className="text-gray-400 text-sm">Laddar profiler...</p>
+        </div>
+      </div>
+    );
+  }
 
   // If no profiles exist, go straight to new user
   if (profiles.length === 0) {
@@ -2792,15 +2873,12 @@ export default function App() {
   };
 
   // Show new user test flow
-  if (showNewUser || !profile) {
-    // Check if there are existing profiles with PINs
-    let hasExistingProfiles = false;
-    try { hasExistingProfiles = JSON.parse(localStorage.getItem("neuralProfiles") || "[]").some(p => p.pin); } catch(e){}
-
-    if (!profile && hasExistingProfiles && !showNewUser) {
-      return <PinLogin onLogin={handleTestComplete} onNewUser={() => setShowNewUser(true)} />;
-    }
+  if (showNewUser) {
     return <DiscTest onComplete={handleTestComplete} />;
+  }
+  if (!profile) {
+    // Always show PinLogin first — it now checks both localStorage AND Supabase
+    return <PinLogin onLogin={(p) => { setProfile(p); }} onNewUser={() => setShowNewUser(true)} />;
   }
 
   return (
