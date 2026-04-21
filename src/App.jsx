@@ -93,6 +93,67 @@ const supabase = {
   })
 };
 
+// Leads Supabase client (different project — CRM data)
+const leadsSupabase = {
+  from: (table) => ({
+    select: (cols = "*") => ({
+      eq: (col, val) => ({
+        order: (orderCol, opts = {}) => ({
+          then: (fn) => fetch(`${LEADS_SUPABASE_URL}/rest/v1/${table}?select=${cols}&${col}=eq.${encodeURIComponent(val)}&order=${orderCol}.${opts.ascending ? 'asc' : 'desc'}`, {
+            headers: { apikey: LEADS_SUPABASE_ANON_KEY, Authorization: `Bearer ${LEADS_SUPABASE_ANON_KEY}` }
+          }).then(r => r.json()).then(d => fn({ data: d }))
+        }),
+        then: (fn) => fetch(`${LEADS_SUPABASE_URL}/rest/v1/${table}?select=${cols}&${col}=eq.${encodeURIComponent(val)}`, {
+          headers: { apikey: LEADS_SUPABASE_ANON_KEY, Authorization: `Bearer ${LEADS_SUPABASE_ANON_KEY}` }
+        }).then(r => r.json()).then(d => fn({ data: d }))
+      }),
+      order: (orderCol, opts = {}) => ({
+        limit: (n) => ({
+          then: (fn) => fetch(`${LEADS_SUPABASE_URL}/rest/v1/${table}?select=${cols}&order=${orderCol}.${opts.ascending ? 'asc' : 'desc'}&limit=${n}`, {
+            headers: { apikey: LEADS_SUPABASE_ANON_KEY, Authorization: `Bearer ${LEADS_SUPABASE_ANON_KEY}` }
+          }).then(r => r.json()).then(d => fn({ data: d }))
+        }),
+        then: (fn) => fetch(`${LEADS_SUPABASE_URL}/rest/v1/${table}?select=${cols}&order=${orderCol}.${opts.ascending ? 'asc' : 'desc'}`, {
+          headers: { apikey: LEADS_SUPABASE_ANON_KEY, Authorization: `Bearer ${LEADS_SUPABASE_ANON_KEY}` }
+        }).then(r => r.json()).then(d => fn({ data: d }))
+      }),
+      then: (fn) => fetch(`${LEADS_SUPABASE_URL}/rest/v1/${table}?select=${cols}`, {
+        headers: { apikey: LEADS_SUPABASE_ANON_KEY, Authorization: `Bearer ${LEADS_SUPABASE_ANON_KEY}` }
+      }).then(r => r.json()).then(d => fn({ data: d }))
+    }),
+    insert: (rows) => fetch(`${LEADS_SUPABASE_URL}/rest/v1/${table}`, {
+      method: "POST",
+      headers: { apikey: LEADS_SUPABASE_ANON_KEY, Authorization: `Bearer ${LEADS_SUPABASE_ANON_KEY}`, "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(Array.isArray(rows) ? rows : [rows])
+    }).then(r => r.json()).then(d => ({ data: d })),
+    upsert: (rows, opts = {}) => fetch(`${LEADS_SUPABASE_URL}/rest/v1/${table}?on_conflict=${opts.onConflict || 'id'}`, {
+      method: "POST",
+      headers: { apikey: LEADS_SUPABASE_ANON_KEY, Authorization: `Bearer ${LEADS_SUPABASE_ANON_KEY}`, "Content-Type": "application/json", Prefer: "return=representation,resolution=merge-duplicates" },
+      body: JSON.stringify(Array.isArray(rows) ? rows : [rows])
+    }).then(r => r.json()).then(d => ({ data: d })),
+    update: (data) => ({
+      eq: (col, val) => fetch(`${LEADS_SUPABASE_URL}/rest/v1/${table}?${col}=eq.${encodeURIComponent(val)}`, {
+        method: "PATCH",
+        headers: { apikey: LEADS_SUPABASE_ANON_KEY, Authorization: `Bearer ${LEADS_SUPABASE_ANON_KEY}`, "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(data)
+      }).then(r => r.json()).then(d => ({ data: d }))
+    }),
+  })
+};
+
+// 6 pipeline stages for CRM
+const PIPELINE_STAGES = [
+  { id: "Inkommen", label: "Inkommen", color: "#3b82f6", icon: Sparkles },
+  { id: "Inget svar", label: "Inget svar", color: "#94a3b8", icon: Clock },
+  { id: "Kontaktad", label: "Kontaktad", color: "#f59e0b", icon: Phone },
+  { id: "Offert", label: "Offert", color: "#8b5cf6", icon: FileText },
+  { id: "Uppföljning", label: "Uppföljning", color: "#06b6d4", icon: RotateCcw },
+  { id: "Avslut", label: "Avslut", color: "#10b981", icon: Target },
+];
+
+// Adversus fixed cost per lead (kr)
+const ADVERSUS_COST_PER_LEAD = 50;
+
 async function callEdgeFunction(name, body) {
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
@@ -167,10 +228,106 @@ const DISC_PROFILES_FULL = {
 };
 
 const DISC_PROFILES = {
-  R: { name: "Röd (Dominant)", short: "Röd", recognize: "Bestämd, kort i svaren, vill ha kontroll. Avbryter. Pratar om resultat och pengar.", drive: "Vinst och kontroll. Vill vinna. Hatar att förlora pengar.", fear: "Att bli lurad. Att förlora pengar. Att inte ha kontroll.", tempo: "SNABBT. Rakt på sak. Max 2 min intro, sen siffror.", say: "\"Det sparar dig [X kr/år] och du får ROI på [Y] år. Bästa systemet. Punkt.\"", avoid: "Vaga löften, 'det beror på', 'du kanske vill tänka på det'", close: "Direkt: \"Ska vi köra? Jag fixar allt.\"", followUp: "Kort SMS med siffror och CTA." },
-  Y: { name: "Gul (Influencer)", short: "Gul", recognize: "Pratar mycket, entusiastisk, avviker. Gillar att skoja. Nämner grannar/vänner.", drive: "Social status. Vill vara först. Gillar ny teknik.", fear: "Att missa nåt. Att andra har det bättre. FOMO.", tempo: "ENERGISKT. Matcha energi. Humor, storytelling. Låt dem prata.", say: "\"Tänk dig att du är den första i kvarteret med det här.\"", avoid: "Torra siffror utan story. Att avbryta dem. Att vara för seriös.", close: "Social proof + FOMO: \"Vi har bara [X] tider kvar i april.\"", followUp: "Personligt: \"Kul samtal! Ledig tid nästa vecka. Sugen?\"" },
-  Gr: { name: "Grön (Stabil)", short: "Grön", recognize: "Lugn, trevlig, få frågor. Svårt att läsa. Vill inte bråka.", drive: "Trygghet för familjen. Konsensus med partner. Harmoni.", fear: "Att göra fel. Att partnern blir arg. Problem.", tempo: "LUGNT. Ge tid. Forcera inte. Mjuka frågor. Tystnad ok.", say: "\"Vi tar hand om allt. Ni behöver inte tänka. Om nåt krånglar, ring oss.\"", avoid: "Press, deadlines, 'nu eller aldrig'. De stänger ner.", close: "Trygghet: \"Steg för steg. Inget bindande. Känns det okej?\"", followUp: "Omtänksamt: \"Ville höra om ni hunnit prata om det? Ingen stress.\"" },
-  B: { name: "Blå (Analytisk)", short: "Blå", recognize: "Detaljerade frågor. Vill ha data. Skeptisk. Metodisk.", drive: "Rätt beslut baserat på fakta. Noggrannhet.", fear: "Att missa detalj. Att data inte stämmer. Irrationellt beslut.", tempo: "METODISKT. Strukturerad. Ha data redo. Skynda inte.", say: "\"Exakt cellkemi, cykellivslängd, garantivillkor. Allt dokumenterat.\"", avoid: "Avrundade siffror, 'ungefär', känsloargument utan data.", close: "Data-close: \"Baserat på siffrorna — ser du anledning att INTE gå vidare?\"", followUp: "Dokumenterat: \"Bifogar spec + ROI-kalkyl. Hunnit gå igenom?\"" },
+  R: {
+    name: "Röd (Dominant)", short: "Röd",
+    recognize: "Bestämd, kort i svaren, vill ha kontroll. Avbryter. Pratar om resultat och pengar.",
+    drive: "Vinst och kontroll. Vill vinna. Hatar att förlora pengar.",
+    fear: "Att bli lurad. Att förlora pengar. Att inte ha kontroll.",
+    tempo: "SNABBT. Rakt på sak. Max 2 min intro, sen siffror.",
+    say: "\"Det sparar dig [X kr/år] och du får ROI på [Y] år. Bästa systemet. Punkt.\"",
+    sayMore: [
+      "\"Det sparar dig [X kr/år] och du får ROI på [Y] år. Bästa systemet.\"",
+      "\"Bestäm idag så fixar jag allt — du behöver inte ens följa upp.\"",
+      "\"Bottom line: du tjänar [X kr] över 10 år jämfört med alternativen.\"",
+      "\"Våra bäst betalande kunder har det här systemet — av en anledning.\"",
+      "\"Vi är snabbast på installation och kräver minst underhåll — mindre tid för dig.\""
+    ],
+    avoid: "Vaga löften, 'det beror på', 'du kanske vill tänka på det'",
+    avoidMore: [
+      "Vaga svar: \"det beror på\" — ge alltid ett konkret besked",
+      "\"Ni kanske vill tänka på det\" — ge dem beslutet istället",
+      "\"Ungefär\" eller \"cirka\" på siffror — var exakt",
+      "Långa utläggningar om process — de vill veta resultatet",
+      "Att visa osäkerhet eller be om betänketid"
+    ],
+    close: "Direkt: \"Ska vi köra? Jag fixar allt.\"",
+    followUp: "Kort SMS med siffror och CTA."
+  },
+  Y: {
+    name: "Gul (Influencer)", short: "Gul",
+    recognize: "Pratar mycket, entusiastisk, avviker. Gillar att skoja. Nämner grannar/vänner.",
+    drive: "Social status. Vill vara först. Gillar ny teknik.",
+    fear: "Att missa nåt. Att andra har det bättre. FOMO.",
+    tempo: "ENERGISKT. Matcha energi. Humor, storytelling. Låt dem prata.",
+    say: "\"Tänk dig att du är den första i kvarteret med det här.\"",
+    sayMore: [
+      "\"Tänk dig att du är först i kvarteret med det här — grannarna kommer fråga.\"",
+      "\"Din familj kommer älska att visa upp det — 'vi har ett sånt'.\"",
+      "\"Vi har installerat hos [kändis/kvarteret] och de är helt sålda.\"",
+      "\"Det är senaste tekniken — inget gammalmodigt alls i det.\"",
+      "\"Vi gör det så enkelt att du kan posta en bild på det innan helgen.\""
+    ],
+    avoid: "Torra siffror utan story. Att avbryta dem. Att vara för seriös.",
+    avoidMore: [
+      "Torra siffror utan story — de tappar intresset direkt",
+      "Att avbryta när de är igång — de ger dig guld om du lyssnar",
+      "Monoton ton — matcha deras energi eller tappa dem",
+      "För mycket detalj — de vill ha känslan, inte manualen",
+      "Fokus på nackdelar — lyft möjligheter och status"
+    ],
+    close: "Social proof + FOMO: \"Vi har bara [X] tider kvar i april.\"",
+    followUp: "Personligt: \"Kul samtal! Ledig tid nästa vecka. Sugen?\""
+  },
+  Gr: {
+    name: "Grön (Stabil)", short: "Grön",
+    recognize: "Lugn, trevlig, få frågor. Svårt att läsa. Vill inte bråka.",
+    drive: "Trygghet för familjen. Konsensus med partner. Harmoni.",
+    fear: "Att göra fel. Att partnern blir arg. Problem.",
+    tempo: "LUGNT. Ge tid. Forcera inte. Mjuka frågor. Tystnad ok.",
+    say: "\"Vi tar hand om allt. Ni behöver inte tänka. Om nåt krånglar, ring oss.\"",
+    sayMore: [
+      "\"Vi tar hand om allt — ni behöver inte oroa er för nåt.\"",
+      "\"Många av våra kunder har haft systemet i 10+ år utan problem.\"",
+      "\"Ingen hast — vi tar det i ert tempo. Prata gärna med partnern först.\"",
+      "\"Vi har supportteam på plats — ni når alltid en människa, inte en robot.\"",
+      "\"Steg för steg — vi gör det tryggt hela vägen.\""
+    ],
+    avoid: "Press, deadlines, 'nu eller aldrig'. De stänger ner.",
+    avoidMore: [
+      "\"Nu eller aldrig\" — de stänger ner mentalt direkt",
+      "Hård deadline utan motivering — de blir obekväma",
+      "För hög energi och snabbt tempo — de känner sig överkörda",
+      "Beslut utan att nämna partnern/familjen",
+      "Press på avslut — de behöver reflektera, inte tryck"
+    ],
+    close: "Trygghet: \"Steg för steg. Inget bindande. Känns det okej?\"",
+    followUp: "Omtänksamt: \"Ville höra om ni hunnit prata om det? Ingen stress.\""
+  },
+  B: {
+    name: "Blå (Analytisk)", short: "Blå",
+    recognize: "Detaljerade frågor. Vill ha data. Skeptisk. Metodisk.",
+    drive: "Rätt beslut baserat på fakta. Noggrannhet.",
+    fear: "Att missa detalj. Att data inte stämmer. Irrationellt beslut.",
+    tempo: "METODISKT. Strukturerad. Ha data redo. Skynda inte.",
+    say: "\"Exakt cellkemi, cykellivslängd, garantivillkor. Allt dokumenterat.\"",
+    sayMore: [
+      "\"Exakt cellkemi: [X]. Cykellivslängd: [Y]. Garanti: [Z]. Allt dokumenterat.\"",
+      "\"Här är hela kalkylen. Alla antaganden är transparent listade.\"",
+      "\"Oberoende tester visar [exakt siffra] — vi tar inte genvägar på fakta.\"",
+      "\"Alla specifikationer finns i PDF jag mailar efter samtalet.\"",
+      "\"Worst case: [X]. Best case: [Y]. Förväntat: [Z]. Du får se alla scenarion.\""
+    ],
+    avoid: "Avrundade siffror, 'ungefär', känsloargument utan data.",
+    avoidMore: [
+      "Avrundade eller approximativa siffror — de vill se decimalerna",
+      "Känsloargument utan data som backar upp",
+      "\"Alla kunder är nöjda\" utan specifika procenttal eller källa",
+      "Skynda dem — de vill ha tid att verifiera fakta",
+      "Säljjargong och buzzwords — de hör igenom det direkt"
+    ],
+    close: "Data-close: \"Baserat på siffrorna — ser du anledning att INTE gå vidare?\"",
+    followUp: "Dokumenterat: \"Bifogar spec + ROI-kalkyl. Hunnit gå igenom?\""
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -429,6 +586,36 @@ const QUIZ_QUESTIONS = [
   { q: "En Blå kund säger 'Jag vill se all dokumentation först'. Vad gör du?", options: ["Försöker stänga ändå", "Ger dem ALLT — PDF:er, spec, garanti", "Säger att det inte finns", "Minimerar deras oro"], correct: 1, explanation: "Blåa behöver data. Ge dem allt." },
 ];
 
+// DISC-igenkänningsquiz
+const DISC_RECOGNITION_QUIZ = [
+  { q: "Kunden säger: 'Okej, jag ska prata med min fru först och höra vad hon tycker. Kan jag få tänka på det?'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 2, explanation: "Konsensus med partner + 'tänka på det' = klassisk Grön. De undviker risk och vill inte bestämma ensamma." },
+  { q: "Kunden svarar efter tre sekunder: 'Vad kostar det? Skit i introduktionen.'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 0, explanation: "Rakt på sak, tidspress, kontroll = Röd. Ge siffror direkt, hoppa över rapport." },
+  { q: "Kunden: 'Åh va roligt! Grannen Anders har ju också solpaneler, vi pratade om det i tisdags!'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 1, explanation: "Social, relaterar till grannar, entusiasm = Gul. Vill tillhöra och vara del av gruppen." },
+  { q: "Kunden frågar: 'Vilken cellkemi använder batteriet? Och vad är exakt cykellivslängd enligt oberoende tester?'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 3, explanation: "Specifika tekniska frågor + 'oberoende' = Blå. Data över emotion." },
+  { q: "Kunden: 'Om jag förstår dig rätt är priset 120 000 plus moms, och installation inkluderar schakt men INTE elskåp. Stämmer det?'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 3, explanation: "Metodisk, verifierar detaljer, söker bekräftelse på fakta = Blå." },
+  { q: "Kunden: 'Vi har haft vårt nuvarande system i 8 år och det funkar fortfarande. Varför byta?'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 2, explanation: "Stabilitet, 'varför byta' = Grön. De undviker förändring och gillar det trygga." },
+  { q: "Kunden: 'Ska vi köra då? Jag vill ha det klart innan nästa månad.'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 0, explanation: "Bestämd, deadline, tar initiativ = Röd. Stäng snabbt, inga extra ord." },
+  { q: "Kunden skrattar: 'Haha ja, vi kanske ska skaffa ett sånt här också! Vem mer har ni hos i kvarteret?'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 1, explanation: "Skratt, social bekräftelse, 'kvarteret' = Gul. Vill vara först och inte missa något." },
+  { q: "Kunden: 'Jag vill inte bestämma nu. Kan ni maila mig så tittar jag nästa vecka?'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 2, explanation: "Undvikande, tidsutsträckning = Grön. Behöver tryggt tempo, inga snabba beslut." },
+  { q: "Kunden: 'Har ni siffror på ROI över 15 år med konservativa antaganden? Och känslighetsanalys om elpriset sjunker?'", options: ["Röd", "Gul", "Grön", "Blå"], correct: 3, explanation: "Analys, känslighetsanalys, konservativ = Blå. Vill se worst case och all data." }
+];
+
+// Funktion som bygger invändningsquiz från OBJECTIONS
+function buildObjectionQuiz() {
+  const pool = OBJECTIONS.slice(0, 8);
+  return pool.map((o, idx) => {
+    const others = OBJECTIONS.filter((_, i) => i !== idx);
+    const wrongs = shuffle(others).slice(0, 3).map(x => x.handling);
+    const allOpts = shuffle([o.handling, ...wrongs]);
+    return {
+      q: `Kunden säger: "${o.inv}". Vilket är BÄST svar?`,
+      options: allOpts,
+      correct: allOpts.indexOf(o.handling),
+      explanation: `Vad kunden egentligen menar: ${o.meaning}`
+    };
+  });
+}
+
 const WEEKLY_QUESTIONS = [
   "Hur många samtal ringde du denna vecka?",
   "Hur många av dessa ledde till samtal 2?",
@@ -524,93 +711,347 @@ function useGamification(profileId) {
 // ═══════════════════════════════════════════════════════════════
 // UI COMPONENTS — GREEN/WHITE THEME
 // ═══════════════════════════════════════════════════════════════
-const Card = ({ children, className = "", onClick, hover = true }) => (
-  <div onClick={onClick} className={`bg-white rounded-2xl border border-gray-100 p-6 ${hover ? "hover:shadow-md hover:border-gray-200" : ""} shadow-sm transition-all duration-200 ${onClick ? "cursor-pointer" : ""} ${className}`}>{children}</div>
+const Card = ({ children, className = "", onClick, hover = true, style }) => (
+  <div onClick={onClick} style={style}
+    className={`glass rounded-3xl p-6 ${hover || onClick ? "lift" : ""} ${onClick ? "cursor-pointer" : ""} ${className}`}>
+    {children}
+  </div>
 );
 
 const Badge = ({ text, color = T.primary, bg }) => (
-  <span className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ background: bg || `${color}15`, color }}>{text}</span>
+  <span className="text-xs font-bold px-2.5 py-1 rounded-full inline-block"
+    style={{
+      background: bg || `${color}1f`,
+      color,
+      boxShadow: `inset 0 0 0 1px ${color}30`,
+      backdropFilter: "blur(6px)",
+      WebkitBackdropFilter: "blur(6px)"
+    }}>{text}</span>
 );
 
 const ProgressBar = ({ value, max = 100, color = T.primary, height = "h-2", className = "" }) => (
-  <div className={`w-full bg-gray-100 rounded-full ${height} overflow-hidden ${className}`}>
-    <div className={`${height} rounded-full transition-all duration-500`} style={{ width: `${Math.min((value / max) * 100, 100)}%`, background: color }} />
+  <div className={`w-full track rounded-full ${height} overflow-hidden ${className}`}>
+    <div className={`${height} rounded-full transition-all duration-700`}
+      style={{
+        width: `${Math.min((value / max) * 100, 100)}%`,
+        background: `linear-gradient(90deg, ${color}, ${color}cc)`,
+        boxShadow: `0 0 12px ${color}70`
+      }} />
   </div>
 );
+
+// Mini DISC radar chart — used on profile cards (login + UI)
+const MiniDiscRadar = ({ profile, size = 120, showLabels = false }) => {
+  const aspects = ["WORK", "SALES", "STRESS", "DECIDE", "CONFLICT", "SOCIAL"];
+  const labels = { WORK: "Arbete", SALES: "Sälj", STRESS: "Stress", DECIDE: "Beslut", CONFLICT: "Konflikt", SOCIAL: "Social" };
+  const cx = size / 2, cy = size / 2;
+  const maxR = size * (showLabels ? 0.32 : 0.40);
+  const angleStep = (2 * Math.PI) / aspects.length;
+  const startAngle = -Math.PI / 2;
+  const colorKeys = ["R", "Y", "Gr", "B"];
+
+  // Compute percents per aspect
+  const raw = profile?.aspectScores || profile?.disc_scores || {};
+  const percents = {};
+  aspects.forEach(asp => {
+    const entry = raw[asp];
+    if (entry?.percents) {
+      percents[asp] = entry.percents;
+    } else if (entry && typeof entry === "object") {
+      const s = entry.scores || entry;
+      const total = (s.R || 0) + (s.Y || 0) + (s.Gr || 0) + (s.B || 0) || 1;
+      percents[asp] = { R: ((s.R || 0) / total) * 100, Y: ((s.Y || 0) / total) * 100, Gr: ((s.Gr || 0) / total) * 100, B: ((s.B || 0) / total) * 100 };
+    } else {
+      // Fallback: boost dominant type only
+      const dom = profile?.discType || profile?.disc_type || "R";
+      percents[asp] = { R: 0, Y: 0, Gr: 0, B: 0 };
+      percents[asp][dom] = 75;
+    }
+  });
+
+  const getPoint = (i, ratio) => {
+    const angle = startAngle + i * angleStep;
+    return { x: cx + maxR * ratio * Math.cos(angle), y: cy + maxR * ratio * Math.sin(angle) };
+  };
+
+  const paths = colorKeys.map(key => {
+    const pts = aspects.map((asp, i) => getPoint(i, (percents[asp][key] || 0) / 100));
+    const d = pts.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`).join(" ") + " Z";
+    const maxPct = Math.max(...aspects.map(asp => percents[asp][key] || 0));
+    return { key, d, color: DISC_COLORS[key], pts, maxPct };
+  }).sort((a, b) => a.maxPct - b.maxPct);
+
+  const rings = [0.35, 0.7, 1];
+  const dom = profile?.discType || profile?.disc_type;
+
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} style={{ width: size, height: size, overflow: "visible" }}>
+      {rings.map(r => (
+        <polygon key={r} points={aspects.map((_, i) => { const p = getPoint(i, r); return `${p.x.toFixed(2)},${p.y.toFixed(2)}`; }).join(" ")}
+          fill="none" stroke="rgba(148,163,184,0.25)" strokeWidth="0.6" />
+      ))}
+      {aspects.map((_, i) => {
+        const p = getPoint(i, 1);
+        return <line key={i} x1={cx} y1={cy} x2={p.x.toFixed(2)} y2={p.y.toFixed(2)} stroke="rgba(148,163,184,0.18)" strokeWidth="0.5" />;
+      })}
+      {paths.map(p => (
+        <path key={p.key} d={p.d} fill={p.color} fillOpacity="0.22" stroke={p.color} strokeWidth="1.4" strokeOpacity="0.8" />
+      ))}
+      {paths.map(p => p.pts.map((pt, i) => {
+        const pct = percents[aspects[i]][p.key] || 0;
+        if (pct < 12) return null;
+        return <circle key={`${p.key}-${i}`} cx={pt.x.toFixed(2)} cy={pt.y.toFixed(2)} r={size * 0.018} fill={p.color} />;
+      }))}
+      {showLabels && aspects.map((asp, i) => {
+        const p = getPoint(i, 1.22);
+        return <text key={asp} x={p.x.toFixed(2)} y={p.y.toFixed(2)} textAnchor="middle" dominantBaseline="middle"
+          style={{ fontSize: size * 0.065, fontWeight: 600, fill: "rgba(100,116,139,0.85)" }}>{labels[asp]}</text>;
+      })}
+      {dom && (
+        <text x={cx} y={cy + size * 0.025} textAnchor="middle" dominantBaseline="middle"
+          style={{ fontSize: size * 0.14, fontWeight: 800, fill: DISC_COLORS[dom], filter: `drop-shadow(0 0 4px ${DISC_COLORS[dom]}80)` }}>
+          {DISC_SHORT[dom] || "?"}
+        </text>
+      )}
+    </svg>
+  );
+};
 
 // ═══════════════════════════════════════════════════════════════
 // PIN LOGIN
 // ═══════════════════════════════════════════════════════════════
 const PinLogin = ({ onLogin, onNewUser }) => {
+  const [profiles, setProfiles] = useState([]);
+  const [loadingProfiles, setLoadingProfiles] = useState(true);
+  const [selectedProfile, setSelectedProfile] = useState(null);
   const [pin, setPin] = useState(["", "", "", ""]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const pinRefs = [useRef(null), useRef(null), useRef(null), useRef(null)];
 
-  useEffect(() => { const cached = JSON.parse(localStorage.getItem("salj_profile") || "null"); if (cached) onLogin(cached); }, []);
+  useEffect(() => {
+    const cached = JSON.parse(localStorage.getItem("salj_profile") || "null");
+    if (cached) { onLogin(cached); return; }
+    supabase.from("salespeople").select("*").then(({ data }) => {
+      setProfiles((data || []).sort((a, b) => (a.name || "").localeCompare(b.name || "", "sv")));
+      setLoadingProfiles(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (selectedProfile) {
+      setPin(["", "", "", ""]);
+      setError("");
+      setTimeout(() => pinRefs[0].current?.focus(), 50);
+    }
+  }, [selectedProfile]);
+
+  const buildProfile = (p, pinCode) => {
+    const aspectScores = {};
+    if (p.disc_scores && typeof p.disc_scores === "object") {
+      Object.entries(p.disc_scores).forEach(([aspect, scores]) => {
+        if (scores && typeof scores === "object") {
+          const total = (scores.R || 0) + (scores.Y || 0) + (scores.Gr || 0) + (scores.B || 0);
+          const entries = Object.entries(scores).sort(([,a],[,b]) => b - a);
+          aspectScores[aspect] = { dominant: entries[0]?.[0] || "R", scores, total, percents: { R: total ? ((scores.R||0)/total)*100 : 0, Y: total ? ((scores.Y||0)/total)*100 : 0, Gr: total ? ((scores.Gr||0)/total)*100 : 0, B: total ? ((scores.B||0)/total)*100 : 0 } };
+        }
+      });
+    }
+    const isAdmin = ADMIN_PINS.includes(pinCode);
+    return { name: p.name, pin: p.pin, discType: p.disc_type, secondaryType: p.disc_secondary, aspectScores, answers: p.disc_answers || [], supabaseId: p.id, isAdmin };
+  };
+
+  const trySubmit = (fullPin) => {
+    if (fullPin.length !== 4 || loading || !selectedProfile) return;
+    setLoading(true);
+    setError("");
+    setTimeout(() => {
+      if (fullPin === String(selectedProfile.pin)) {
+        const profile = buildProfile(selectedProfile, fullPin);
+        localStorage.setItem("salj_profile", JSON.stringify(profile));
+        onLogin(profile);
+      } else {
+        setError("Fel PIN-kod");
+        setPin(["", "", "", ""]);
+        pinRefs[0].current?.focus();
+        setLoading(false);
+      }
+    }, 180);
+  };
 
   const handlePinChange = (idx, val) => {
-    const newPin = [...pin]; newPin[idx] = val.slice(-1).toUpperCase(); setPin(newPin);
-    if (newPin[idx] && idx < 3) pinRefs[idx + 1].current?.focus();
+    const v = val.replace(/\D/g, "").slice(-1);
+    const newPin = [...pin];
+    newPin[idx] = v;
+    setPin(newPin);
+    if (v && idx < 3) pinRefs[idx + 1].current?.focus();
+    if (v && idx === 3) trySubmit(newPin.join(""));
   };
 
   const handleKeyDown = (idx, e) => {
     if (e.key === "Backspace" && !pin[idx] && idx > 0) pinRefs[idx - 1].current?.focus();
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    const pinCode = pin.join("");
-    if (pinCode.length !== 4) { setError("PIN måste vara 4 siffror"); return; }
-    setLoading(true);
-    try {
-      const { data } = await supabase.from("salespeople").select("*").eq("pin", pinCode).single();
-      if (data) {
-        const p = data;
-        const aspectScores = {};
-        if (p.disc_scores && typeof p.disc_scores === "object") {
-          Object.entries(p.disc_scores).forEach(([aspect, scores]) => {
-            if (scores && typeof scores === "object") {
-              const total = (scores.R || 0) + (scores.Y || 0) + (scores.Gr || 0) + (scores.B || 0);
-              const entries = Object.entries(scores).sort(([,a],[,b]) => b - a);
-              aspectScores[aspect] = { dominant: entries[0]?.[0] || "R", scores, total, percents: { R: total ? ((scores.R||0)/total)*100 : 0, Y: total ? ((scores.Y||0)/total)*100 : 0, Gr: total ? ((scores.Gr||0)/total)*100 : 0, B: total ? ((scores.B||0)/total)*100 : 0 } };
-            }
-          });
-        }
-        const isAdmin = ADMIN_PINS.includes(pinCode);
-        const profile = { name: p.name, pin: p.pin, discType: p.disc_type, secondaryType: p.disc_secondary, aspectScores, answers: p.disc_answers || [], supabaseId: p.id, isAdmin };
-        localStorage.setItem("salj_profile", JSON.stringify(profile));
-        onLogin(profile);
-      } else { setError("Fel PIN-kod"); }
-    } catch (e) { setError("Fel vid inloggning"); } finally { setLoading(false); }
+  const handleSubmit = (e) => { e.preventDefault(); trySubmit(pin.join("")); };
+
+  // Compute dominant color for a profile
+  const profileColor = (p) => DISC_COLORS[p?.disc_type] || T.primary;
+
+  // Get DISC breakdown counts for mini-bars
+  const discBreakdown = (p) => {
+    const ans = p?.disc_answers;
+    if (!Array.isArray(ans) || ans.length === 0) return null;
+    const counts = { R: 0, Y: 0, Gr: 0, B: 0 };
+    ans.forEach(a => { if (counts[a] !== undefined) counts[a]++; });
+    const total = Object.values(counts).reduce((a,b)=>a+b, 0) || 1;
+    return { R: counts.R/total, Y: counts.Y/total, Gr: counts.Gr/total, B: counts.B/total };
   };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-green-50 flex items-center justify-center p-6">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-10">
-          <div className="w-20 h-20 bg-gradient-to-br from-emerald-500 to-green-600 rounded-3xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-emerald-500/25 transform rotate-3">
-            <Leaf size={36} className="text-white transform -rotate-3" />
+  const LampOrb = ({ color, size = 48, active = true }) => (
+    <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
+      <div className="absolute inset-0 rounded-full glow-pulse"
+        style={{
+          background: `radial-gradient(circle, ${color}${active ? '85' : '30'}, transparent 70%)`,
+          filter: `blur(${active ? size*0.3 : size*0.18}px)`,
+          transform: active ? "scale(1.35)" : "scale(1)"
+        }} />
+      <div className="relative rounded-full"
+        style={{
+          width: size * 0.75, height: size * 0.75,
+          background: `radial-gradient(circle at 30% 25%, ${color}ff, ${color}cc 45%, ${color}88 100%)`,
+          boxShadow: `0 0 0 1px ${color}40, 0 8px 22px ${color}80, inset 0 2px 5px rgba(255,255,255,0.55), inset 0 -3px 6px rgba(0,0,0,0.2)`
+        }}>
+        <div className="absolute rounded-full"
+          style={{
+            top: "15%", left: "22%",
+            width: "30%", height: "22%",
+            background: "radial-gradient(ellipse, rgba(255,255,255,0.85), transparent 70%)",
+            filter: "blur(1px)"
+          }} />
+      </div>
+    </div>
+  );
+
+  // ── Profile picker view ──
+  if (!selectedProfile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute top-[-10%] left-[-10%] w-[420px] h-[420px] rounded-full blob-1 pointer-events-none"
+          style={{ background: "radial-gradient(circle, rgba(16,185,129,0.45), transparent 70%)", filter: "blur(40px)" }} />
+        <div className="absolute bottom-[-15%] right-[-10%] w-[480px] h-[480px] rounded-full blob-2 pointer-events-none"
+          style={{ background: "radial-gradient(circle, rgba(6,182,212,0.42), transparent 70%)", filter: "blur(50px)" }} />
+        <div className="absolute top-[30%] right-[15%] w-[280px] h-[280px] rounded-full blob-3 pointer-events-none"
+          style={{ background: "radial-gradient(circle, rgba(139,92,246,0.35), transparent 70%)", filter: "blur(40px)" }} />
+
+        <div className="w-full max-w-3xl relative z-10 animate-fadeIn">
+          <div className="text-center mb-10">
+            <div className="w-20 h-20 rounded-[28px] flex items-center justify-center mx-auto mb-5 relative glow-pulse"
+              style={{
+                background: "linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%)",
+                boxShadow: "0 20px 50px rgba(16,185,129,0.45), 0 0 0 1px rgba(255,255,255,0.3) inset, 0 -4px 20px rgba(255,255,255,0.4) inset",
+                transform: "rotate(3deg)"
+              }}>
+              <Leaf size={38} className="text-white" style={{ transform: "rotate(-3deg)", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.2))" }} />
+            </div>
+            <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">Proffskontakt</h1>
+            <p className="text-sm font-semibold mt-1.5 tracking-[0.2em]"
+              style={{ background: "linear-gradient(90deg, #10b981, #06b6d4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>
+              SÄLJTRÄNING
+            </p>
+            <p className="text-gray-500 mt-6 text-base">Välj din profil</p>
           </div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Proffskontakt</h1>
-          <p className="text-emerald-600 text-sm font-semibold mt-1 tracking-wide">SÄLJTRÄNING</p>
+
+          {loadingProfiles ? (
+            <div className="text-center text-gray-400 text-sm py-12">Laddar profiler...</div>
+          ) : profiles.length === 0 ? (
+            <div className="glass-strong rounded-[28px] p-10 text-center">
+              <p className="text-gray-600 mb-5">Inga profiler ännu. Skapa din första.</p>
+              <button onClick={onNewUser}
+                className="px-8 py-3 text-white rounded-2xl font-semibold transition-all salj-btn-primary">
+                Ny användare
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+                {profiles.map(p => {
+                  const color = profileColor(p);
+                  const archetype = DISC_PROFILES_FULL[p.disc_type]?.archetype || "";
+                  return (
+                    <button key={p.id} onClick={() => setSelectedProfile(p)}
+                      className="glass rounded-[24px] p-5 transition-all active:scale-[0.97] relative overflow-hidden group"
+                      style={{ lineHeight: 1.2 }}
+                      onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.boxShadow = `0 18px 40px ${color}30, 0 4px 14px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.6)`; }}
+                      onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; }}>
+                      <div className="absolute top-0 right-0 w-40 h-40 rounded-full pointer-events-none opacity-60 group-hover:opacity-100 transition-opacity"
+                        style={{ background: `radial-gradient(circle, ${color}40, transparent 70%)`, filter: "blur(30px)", transform: "translate(30%, -35%)" }} />
+                      <div className="relative flex flex-col items-center gap-2">
+                        <div className="py-2">
+                          <MiniDiscRadar profile={p} size={130} showLabels={true} />
+                        </div>
+                        <div className="text-center mt-1">
+                          <p className="text-base font-bold text-gray-900 leading-tight">{p.name}</p>
+                          <p className="text-[11px] font-semibold tracking-wider uppercase mt-1" style={{ color }}>{DISC_SHORT[p.disc_type] || "?"} · {archetype || "Säljare"}</p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button onClick={onNewUser}
+                className="w-full glass-subtle rounded-2xl px-6 py-4 font-semibold text-gray-700 transition-all hover:bg-white/70 flex items-center justify-center gap-2">
+                <span className="text-lg leading-none">+</span> Ny användare
+              </button>
+            </>
+          )}
         </div>
-        <form onSubmit={handleSubmit} className="bg-white rounded-3xl border border-gray-100 p-8 shadow-xl shadow-gray-200/50">
+      </div>
+    );
+  }
+
+  // ── PIN entry view (profile selected) ──
+  const selColor = profileColor(selectedProfile);
+  const archetype = DISC_PROFILES_FULL[selectedProfile.disc_type]?.archetype || "";
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+      <div className="absolute top-[-10%] left-[-10%] w-[420px] h-[420px] rounded-full blob-1 pointer-events-none"
+        style={{ background: `radial-gradient(circle, ${selColor}55, transparent 70%)`, filter: "blur(50px)" }} />
+      <div className="absolute bottom-[-15%] right-[-10%] w-[480px] h-[480px] rounded-full blob-2 pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(139,92,246,0.32), transparent 70%)", filter: "blur(55px)" }} />
+
+      <div className="w-full max-w-sm relative z-10 animate-fadeIn">
+        <button onClick={() => setSelectedProfile(null)}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors mb-6 mx-auto">
+          <ChevronLeft size={16} /> Välj annan profil
+        </button>
+
+        <div className="text-center mb-6">
+          <div className="mx-auto mb-3 flex justify-center">
+            <MiniDiscRadar profile={selectedProfile} size={140} showLabels={true} />
+          </div>
+          <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">{selectedProfile.name}</h1>
+          <p className="text-sm font-semibold mt-1" style={{ color: selColor }}>{DISC_SHORT[selectedProfile.disc_type]} · {archetype || "Säljare"}</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="glass-strong rounded-[28px] p-8">
           <label className="block text-sm font-semibold text-gray-900 mb-4 text-center">Ange din PIN-kod</label>
-          <div className="flex gap-3 justify-center mb-6">
+          <div className="flex gap-3 justify-center mb-5">
             {pin.map((p, i) => (
               <input key={i} ref={pinRefs[i]} type="text" inputMode="numeric" maxLength="1" value={p}
                 onChange={(e) => handlePinChange(i, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(i, e)}
-                className="w-14 h-14 text-center text-2xl font-bold border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-50 focus:outline-none transition-all bg-gray-50" />
+                className="glass-input w-14 h-16 text-center text-2xl font-bold rounded-2xl focus:outline-none text-gray-900" />
             ))}
           </div>
-          {error && <div className="text-red-500 text-sm text-center mb-4 font-medium bg-red-50 rounded-lg py-2">{error}</div>}
-          <button type="submit" disabled={loading} className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl font-semibold hover:from-emerald-600 hover:to-green-700 disabled:from-gray-300 disabled:to-gray-300 transition-all shadow-lg shadow-emerald-500/20 mb-3">
-            {loading ? "Laddar..." : "Logga in"}
-          </button>
-          <button type="button" onClick={onNewUser} className="w-full py-3 bg-gray-50 text-gray-700 rounded-xl font-medium hover:bg-gray-100 border border-gray-200 transition-all">
-            Ny användare
+          {error && <div className="text-red-500 text-sm text-center mb-4 font-medium py-2 rounded-xl" style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.2)" }}>{error}</div>}
+          <button type="submit" disabled={loading || pin.join("").length !== 4}
+            className="w-full py-3.5 text-white rounded-2xl font-semibold transition-all disabled:opacity-50"
+            style={{
+              background: `linear-gradient(135deg, ${selColor}, ${selColor}cc)`,
+              boxShadow: `0 10px 30px ${selColor}55, inset 0 1px 0 rgba(255,255,255,0.25)`
+            }}>
+            {loading ? "Loggar in..." : "Logga in"}
           </button>
         </form>
       </div>
@@ -664,30 +1105,45 @@ const DiscTest = ({ onComplete }) => {
   // Result screen
   if (showResult && result) {
     const fullP = DISC_PROFILES_FULL[result.discType];
+    const resultColor = DISC_COLORS[result.discType];
     return (
-      <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-green-50 flex items-center justify-center p-6">
-        <div className="w-full max-w-lg">
+      <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute top-[-10%] left-[-5%] w-[480px] h-[480px] rounded-full blob-1 pointer-events-none"
+          style={{ background: `radial-gradient(circle, ${resultColor}60, transparent 70%)`, filter: "blur(50px)" }} />
+        <div className="absolute bottom-[-10%] right-[-5%] w-[520px] h-[520px] rounded-full blob-2 pointer-events-none"
+          style={{ background: "radial-gradient(circle, rgba(139,92,246,0.35), transparent 70%)", filter: "blur(55px)" }} />
+        <div className="w-full max-w-lg relative z-10 animate-fadeIn">
           <div className="text-center mb-8">
-            <div className="w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-4 text-5xl" style={{ background: `${DISC_COLORS[result.discType]}15` }}>
+            <div className="w-28 h-28 rounded-full flex items-center justify-center mx-auto mb-4 text-6xl relative glow-pulse"
+              style={{
+                background: `radial-gradient(circle at 30% 30%, ${resultColor}40, ${resultColor}15)`,
+                boxShadow: `0 20px 60px ${resultColor}55, inset 0 2px 4px rgba(255,255,255,0.4)`,
+                border: `1px solid ${resultColor}40`
+              }}>
               {DISC_EMOJI[result.discType]}
             </div>
-            <h1 className="text-3xl font-extrabold text-gray-900">Du är {fullP.name}!</h1>
-            <p className="text-gray-500 mt-2">{fullP.archetype}</p>
+            <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">Du är {fullP.name}!</h1>
+            <p className="text-gray-500 mt-2 text-lg">{fullP.archetype}</p>
           </div>
           <Card hover={false} className="mb-6">
-            <p className="text-gray-700 text-center leading-relaxed">{fullP.oneLiner}</p>
+            <p className="text-gray-700 text-center leading-relaxed text-balance">{fullP.oneLiner}</p>
           </Card>
           <div className="grid grid-cols-2 gap-4 mb-6">
-            <Card hover={false} className="!p-4">
-              <p className="text-xs font-bold text-emerald-600 mb-2">SUPERKRAFTER</p>
-              {fullP.superpowers.slice(0,2).map((s,i) => <p key={i} className="text-xs text-gray-600 mb-1">+ {s}</p>)}
+            <Card hover={false} className="!p-5">
+              <p className="text-xs font-bold text-emerald-600 mb-2 tracking-wider">SUPERKRAFTER</p>
+              {fullP.superpowers.slice(0,2).map((s,i) => <p key={i} className="text-xs text-gray-600 mb-1.5 leading-relaxed">+ {s}</p>)}
             </Card>
-            <Card hover={false} className="!p-4">
-              <p className="text-xs font-bold text-red-500 mb-2">BLINDSPOTS</p>
-              {fullP.blindspots.slice(0,2).map((s,i) => <p key={i} className="text-xs text-gray-600 mb-1">- {s}</p>)}
+            <Card hover={false} className="!p-5">
+              <p className="text-xs font-bold text-red-500 mb-2 tracking-wider">BLINDSPOTS</p>
+              {fullP.blindspots.slice(0,2).map((s,i) => <p key={i} className="text-xs text-gray-600 mb-1.5 leading-relaxed">− {s}</p>)}
             </Card>
           </div>
-          <button onClick={() => onComplete(result)} className="w-full py-4 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl font-bold text-lg hover:from-emerald-600 hover:to-green-700 transition-all shadow-lg shadow-emerald-500/20">
+          <button onClick={() => onComplete(result)}
+            className="w-full py-4 text-white rounded-2xl font-bold text-lg transition-all"
+            style={{
+              background: "linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%)",
+              boxShadow: "0 12px 40px rgba(16,185,129,0.45), inset 0 1px 0 rgba(255,255,255,0.25)"
+            }}>
             Starta din träning →
           </button>
         </div>
@@ -697,27 +1153,47 @@ const DiscTest = ({ onComplete }) => {
 
   // Intro screen
   if (phase === "intro") return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-green-50 flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+      <div className="absolute top-[-10%] left-[-10%] w-[420px] h-[420px] rounded-full blob-1 pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(16,185,129,0.42), transparent 70%)", filter: "blur(45px)" }} />
+      <div className="absolute bottom-[-15%] right-[-10%] w-[480px] h-[480px] rounded-full blob-2 pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(139,92,246,0.35), transparent 70%)", filter: "blur(50px)" }} />
+
+      <div className="w-full max-w-md relative z-10 animate-fadeIn">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-500/20">
-            <Brain size={28} className="text-white" />
+          <div className="w-18 h-18 rounded-[24px] flex items-center justify-center mx-auto mb-4 glow-pulse"
+            style={{
+              width: "72px", height: "72px",
+              background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+              boxShadow: "0 16px 40px rgba(16,185,129,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+            }}>
+            <Brain size={30} className="text-white" />
           </div>
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">DISC Personlighetstest</h1>
           <p className="text-gray-500 mt-2">{DISC_QUESTIONS.length} frågor — upptäck din försäljarprofil</p>
         </div>
-        <form onSubmit={(e) => { e.preventDefault(); if(name.trim() && pin.join("").length === 4) setPhase("quiz"); }} className="bg-white rounded-3xl border border-gray-100 p-8 shadow-xl shadow-gray-200/50 space-y-5">
+        <form onSubmit={(e) => { e.preventDefault(); if(name.trim() && pin.join("").length === 4) setPhase("quiz"); }}
+          className="glass-strong rounded-[28px] p-8 space-y-5">
           <div>
             <label className="block text-sm font-semibold text-gray-900 mb-2">Ditt namn</label>
-            <input type="text" value={name} onChange={e=>setName(e.target.value)} className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-50 focus:outline-none bg-gray-50" placeholder="Förnamn Efternamn" />
+            <input type="text" value={name} onChange={e=>setName(e.target.value)}
+              className="glass-input w-full px-4 py-3 rounded-2xl focus:outline-none text-gray-900 placeholder-gray-400"
+              placeholder="Förnamn Efternamn" />
           </div>
           <div>
             <label className="block text-sm font-semibold text-gray-900 mb-2">Välj en 4-siffrig PIN</label>
             <div className="flex gap-3 justify-center">
-              {pin.map((p,i) => <input key={i} ref={pinRefs[i]} type="text" inputMode="numeric" maxLength="1" value={p} onChange={e=>handlePinChange(i,e.target.value)} className="w-14 h-14 text-center text-2xl font-bold border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:outline-none bg-gray-50" />)}
+              {pin.map((p,i) => <input key={i} ref={pinRefs[i]} type="text" inputMode="numeric" maxLength="1" value={p}
+                onChange={e=>handlePinChange(i,e.target.value)}
+                className="glass-input w-14 h-16 text-center text-2xl font-bold rounded-2xl focus:outline-none text-gray-900" />)}
             </div>
           </div>
-          <button type="submit" disabled={!name.trim() || pin.join("").length !== 4} className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl font-semibold hover:from-emerald-600 hover:to-green-700 disabled:from-gray-300 disabled:to-gray-300 transition-all shadow-lg shadow-emerald-500/20">
+          <button type="submit" disabled={!name.trim() || pin.join("").length !== 4}
+            className="w-full py-3.5 text-white rounded-2xl font-semibold transition-all disabled:opacity-50"
+            style={{
+              background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+              boxShadow: "0 10px 30px rgba(16,185,129,0.35), inset 0 1px 0 rgba(255,255,255,0.25)"
+            }}>
             Starta testet
           </button>
         </form>
@@ -731,23 +1207,48 @@ const DiscTest = ({ onComplete }) => {
   const aspectLabels = { WORK: "Arbete", SALES: "Sälj", STRESS: "Stress", DECIDE: "Beslut", CONFLICT: "Konflikt", SOCIAL: "Social" };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-green-50 p-6">
-      <div className="max-w-2xl mx-auto pt-8">
+    <div className="min-h-screen p-6 relative overflow-hidden flex items-center justify-center">
+      <div className="absolute top-[-10%] right-[-10%] w-[480px] h-[480px] rounded-full blob-2 pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(6,182,212,0.32), transparent 70%)", filter: "blur(50px)" }} />
+      <div className="absolute bottom-[-10%] left-[-10%] w-[420px] h-[420px] rounded-full blob-3 pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(16,185,129,0.32), transparent 70%)", filter: "blur(45px)" }} />
+
+      <div className="max-w-2xl w-full relative z-10 animate-fadeIn">
         <div className="flex justify-between items-center mb-2">
           <span className="text-sm font-bold text-gray-900">{currentQ+1} / {DISC_QUESTIONS.length}</span>
           <Badge text={aspectLabels[q.aspect] || q.aspect} color={T.primary} />
         </div>
         <ProgressBar value={progress} color={T.primary} className="mb-8" />
 
-        <Card hover={false} className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-6 leading-relaxed">{q.q}</h2>
-          <div className="space-y-3">
-            {(optionOrder[currentQ]||q.options).map((opt,i) => (
-              <button key={i} onClick={() => handleAnswer(opt.type)}
-                className="w-full p-4 text-left border-2 border-gray-100 rounded-xl hover:border-emerald-300 hover:bg-emerald-50/50 transition-all text-gray-900 font-medium active:scale-[0.98]">
-                {opt.text}
-              </button>
-            ))}
+        <Card hover={false} className="mb-6 !p-8">
+          <h2 className="text-xl font-semibold text-gray-900 mb-6 leading-relaxed text-balance">{q.q}</h2>
+          <div className="grid gap-3.5">
+            {(optionOrder[currentQ]||q.options).map((opt,i) => {
+              const letter = ["A","B","C","D"][i] || String(i+1);
+              return (
+                <button key={i} onClick={() => handleAnswer(opt.type)}
+                  className="w-full text-left rounded-2xl p-4 transition-all active:scale-[0.98] flex items-start gap-3.5"
+                  style={{
+                    background: "rgba(255,255,255,0.55)",
+                    border: "1px solid rgba(15,23,42,0.08)",
+                    backdropFilter: "blur(14px)",
+                    WebkitBackdropFilter: "blur(14px)",
+                    boxShadow: "0 4px 14px rgba(15,23,42,0.05), inset 0 1px 0 rgba(255,255,255,0.5)"
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.background = "rgba(255,255,255,0.8)"; e.currentTarget.style.borderColor = "rgba(16,185,129,0.4)"; e.currentTarget.style.boxShadow = "0 10px 28px rgba(16,185,129,0.18), 0 4px 12px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.6)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.background = "rgba(255,255,255,0.55)"; e.currentTarget.style.borderColor = "rgba(15,23,42,0.08)"; e.currentTarget.style.boxShadow = "0 4px 14px rgba(15,23,42,0.05), inset 0 1px 0 rgba(255,255,255,0.5)"; }}>
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold text-emerald-700"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(16,185,129,0.22), rgba(16,185,129,0.08))",
+                      border: "1px solid rgba(16,185,129,0.3)",
+                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.4)"
+                    }}>
+                    {letter}
+                  </div>
+                  <p className="text-base text-gray-900 font-medium leading-relaxed flex-1 pt-1">{opt.text}</p>
+                </button>
+              );
+            })}
           </div>
         </Card>
 
@@ -770,6 +1271,7 @@ const Sidebar = ({ page, setPage, profile, xp, streak, onLogout, dark, setDark }
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: Home },
+    { id: "leads", label: "Mina leads", icon: Users },
     { id: "coach", label: "AI Säljcoach", icon: Bot },
     { id: "expert", label: "Batteriexperten", icon: Battery },
     { id: "training", label: "Utbildning", icon: GraduationCap },
@@ -781,64 +1283,100 @@ const Sidebar = ({ page, setPage, profile, xp, streak, onLogout, dark, setDark }
   }
 
   return (
-    <div className={`w-64 flex flex-col h-screen fixed left-0 top-0 z-30 border-r transition-colors duration-300 ${dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-100"}`}>
-      {/* Logo */}
-      <div className="p-6 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-green-600 rounded-xl flex items-center justify-center shadow-sm">
-            <Leaf size={20} className="text-white" />
-          </div>
-          <div>
-            <h1 className={`text-sm font-extrabold tracking-tight ${dark ? "text-gray-100" : "text-gray-900"}`}>Proffskontakt</h1>
-            <p className="text-xs text-emerald-500 font-semibold">Säljträning</p>
+    <div className="w-64 flex flex-col h-screen fixed left-0 top-0 z-30 p-3">
+      <div className="glass-strong rounded-[28px] flex flex-col h-full relative overflow-hidden">
+        {/* Decorative inner blob */}
+        <div className="absolute top-[-20%] left-[-20%] w-[280px] h-[280px] rounded-full pointer-events-none opacity-60"
+          style={{ background: "radial-gradient(circle, rgba(16,185,129,0.35), transparent 70%)", filter: "blur(40px)" }} />
+
+        {/* Logo */}
+        <div className="p-5 pb-4 relative">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-[14px] flex items-center justify-center"
+              style={{
+                background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+                boxShadow: "0 8px 20px rgba(16,185,129,0.35), inset 0 1px 0 rgba(255,255,255,0.3)"
+              }}>
+              <Leaf size={20} className="text-white" />
+            </div>
+            <div>
+              <h1 className="text-sm font-extrabold tracking-tight text-gray-900">Proffskontakt</h1>
+              <p className="text-xs font-semibold tracking-wider"
+                style={{ background: "linear-gradient(90deg, #10b981, #06b6d4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>
+                SÄLJTRÄNING
+              </p>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Profile card */}
-      <div className={`mx-4 mb-4 p-3 rounded-xl border transition-colors ${dark ? "bg-gray-800/50 border-gray-700" : "bg-gradient-to-r from-emerald-50 to-green-50 border-emerald-100"}`}>
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm" style={{ background: DISC_COLORS[profile?.discType] || T.primary }}>
-            {profile?.name?.[0] || "?"}
+        {/* Profile card */}
+        <div className="mx-3 mb-4 p-3 rounded-2xl relative overflow-hidden"
+          style={{
+            background: `linear-gradient(135deg, ${DISC_COLORS[profile?.discType] || T.primary}22, ${DISC_COLORS[profile?.discType] || T.primary}08)`,
+            border: `1px solid ${DISC_COLORS[profile?.discType] || T.primary}25`,
+            backdropFilter: "blur(10px)"
+          }}>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm"
+              style={{
+                background: `linear-gradient(135deg, ${DISC_COLORS[profile?.discType] || T.primary}, ${DISC_COLORS[profile?.discType] || T.primary}cc)`,
+                boxShadow: `0 6px 16px ${DISC_COLORS[profile?.discType] || T.primary}50`
+              }}>
+              {profile?.name?.[0] || "?"}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold truncate text-gray-900">{profile?.name}</p>
+              <p className="text-xs text-gray-500">{level.name} • {DISC_SHORT[profile?.discType]}</p>
+            </div>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className={`text-sm font-bold truncate ${dark ? "text-gray-100" : "text-gray-900"}`}>{profile?.name}</p>
-            <p className={`text-xs ${dark ? "text-gray-400" : "text-gray-500"}`}>{level.name} • {DISC_SHORT[profile?.discType]}</p>
+          <div className="flex items-center gap-2">
+            <ProgressBar value={progress.progress} height="h-1.5" color={level.color} className="flex-1" />
+            <span className="text-xs font-bold" style={{ color: level.color }}>{xp} XP</span>
           </div>
+          {streak > 0 && (
+            <div className="flex items-center gap-1 mt-1.5">
+              <Flame size={12} className="text-orange-500" />
+              <span className="text-xs font-semibold text-orange-600">{streak} dagars streak</span>
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <ProgressBar value={progress.progress} height="h-1.5" color={level.color} className="flex-1" />
-          <span className="text-xs font-bold" style={{ color: level.color }}>{xp} XP</span>
+
+        {/* Nav items */}
+        <nav className="flex-1 px-3 space-y-1 relative">
+          {navItems.map(item => {
+            const active = page === item.id;
+            return (
+              <button key={item.id} onClick={() => setPage(item.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-medium transition-all ${
+                  active
+                    ? "text-emerald-700 font-semibold"
+                    : "text-gray-500 hover:text-gray-900"
+                }`}
+                style={active ? {
+                  background: "linear-gradient(135deg, rgba(16,185,129,0.18), rgba(16,185,129,0.08))",
+                  boxShadow: "inset 0 0 0 1px rgba(16,185,129,0.25), 0 4px 14px rgba(16,185,129,0.15)",
+                  backdropFilter: "blur(10px)"
+                } : {}}>
+                <item.icon size={18} className={active ? "text-emerald-600" : ""} />
+                {item.label}
+                {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-500" style={{ boxShadow: "0 0 8px #10b981" }} />}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Theme toggle + Logout */}
+        <div className="p-3 relative">
+          <div className="h-px mb-2" style={{ background: "linear-gradient(90deg, transparent, rgba(15,23,42,0.1), transparent)" }} />
+          <button onClick={() => setDark(!dark)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-medium transition-all text-gray-500 hover:text-amber-600">
+            {dark ? <Sun size={18} /> : <Moon size={18} />} {dark ? "Ljust tema" : "Mörkt tema"}
+          </button>
+          <button onClick={onLogout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-medium transition-all text-gray-500 hover:text-red-500">
+            <LogOut size={18} /> Logga ut
+          </button>
         </div>
-        {streak > 0 && <div className="flex items-center gap-1 mt-1.5"><Flame size={12} className="text-orange-500" /><span className="text-xs font-semibold text-orange-600">{streak} dagars streak</span></div>}
-      </div>
-
-      {/* Nav items */}
-      <nav className="flex-1 px-3 space-y-1">
-        {navItems.map(item => {
-          const active = page === item.id;
-          return (
-            <button key={item.id} onClick={() => setPage(item.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                active
-                  ? dark ? "bg-emerald-900/30 text-emerald-400 font-semibold" : "bg-emerald-50 text-emerald-700 font-semibold"
-                  : dark ? "text-gray-400 hover:text-gray-200 hover:bg-gray-800" : "text-gray-500 hover:text-gray-900 hover:bg-gray-50"
-              }`}>
-              <item.icon size={18} className={active ? dark ? "text-emerald-400" : "text-emerald-600" : ""} />
-              {item.label}
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Theme toggle + Logout */}
-      <div className={`p-4 border-t space-y-1 ${dark ? "border-gray-800" : "border-gray-50"}`}>
-        <button onClick={() => setDark(!dark)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${dark ? "text-gray-400 hover:text-amber-400 hover:bg-gray-800" : "text-gray-400 hover:text-amber-600 hover:bg-amber-50"}`}>
-          {dark ? <Sun size={18} /> : <Moon size={18} />} {dark ? "Ljust tema" : "Mörkt tema"}
-        </button>
-        <button onClick={onLogout} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${dark ? "text-gray-500 hover:text-red-400 hover:bg-red-900/20" : "text-gray-400 hover:text-red-500 hover:bg-red-50"}`}>
-          <LogOut size={18} /> Logga ut
-        </button>
       </div>
     </div>
   );
@@ -985,8 +1523,12 @@ const Dashboard = ({ profile, setPage, xp, addXp, streak }) => {
                 </div>
 
                 {/* What this means for you */}
-                <div className="p-4 rounded-xl border-l-4 mb-4" style={{ borderColor: DISC_COLORS[dom], background: `${DISC_COLORS[dom]}08` }}>
-                  <p className="text-xs font-semibold tracking-wide mb-2" style={{ color: DISC_COLORS[dom] }}>VAD DET INNEBÄR FÖR DIG</p>
+                <div className="px-5 py-4 rounded-2xl mb-4"
+                  style={{
+                    background: `linear-gradient(135deg, ${DISC_COLORS[dom]}22, ${DISC_COLORS[dom]}08)`,
+                    border: `1px solid ${DISC_COLORS[dom]}30`
+                  }}>
+                  <p className="text-[11px] font-bold tracking-wider mb-1.5" style={{ color: DISC_COLORS[dom] }}>VAD DET INNEBÄR FÖR DIG</p>
                   <p className="text-sm text-gray-700">
                     {asp === "WORK" && dom === "R" && "Du är resultatdriven och tar naturligt ledarskap. Du gillar självständighet och mål du kan jaga. Risk: du kör över teamet."}
                     {asp === "WORK" && dom === "Y" && "Du trivs i kreativa, sociala arbetsmiljöer. Du drivs av variation och energi. Risk: rutinjobb tappar dig."}
@@ -1028,22 +1570,52 @@ const Dashboard = ({ profile, setPage, xp, addXp, streak }) => {
     );
   };
 
+  const StatChip = ({ icon: Icon, label, value, color, emoji }) => (
+    <Card hover={false} className="!p-5 relative overflow-hidden">
+      <div className="absolute top-0 right-0 w-32 h-32 rounded-full pointer-events-none opacity-60"
+        style={{ background: `radial-gradient(circle, ${color}25, transparent 70%)`, filter: "blur(20px)", transform: "translate(25%, -30%)" }} />
+      <div className="flex flex-col gap-4 relative">
+        <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+          style={{
+            background: `linear-gradient(135deg, ${color}30, ${color}12)`,
+            boxShadow: `inset 0 0 0 1px ${color}30, 0 8px 20px ${color}25, inset 0 1px 0 rgba(255,255,255,0.4)`
+          }}>
+          {emoji ? <span className="text-2xl">{emoji}</span> : <Icon size={22} style={{ color }} />}
+        </div>
+        <div>
+          <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">{label}</p>
+          <p className="text-2xl font-extrabold text-gray-900 leading-tight">{value}</p>
+        </div>
+      </div>
+    </Card>
+  );
+
   return (
     <div className="space-y-6 animate-fadeIn">
       {/* Welcome header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-extrabold text-gray-900">Hej, {profile?.name}! 👋</h1>
-          <p className="text-gray-500 mt-0.5">Redo att bli en bättre säljare idag?</p>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Hej, {profile?.name}! 👋</h1>
+          <p className="text-gray-500 mt-1">Redo att bli en bättre säljare idag?</p>
         </div>
         <div className="flex items-center gap-3">
           {streak > 0 && (
-            <div className="flex items-center gap-2 bg-orange-50 px-4 py-2 rounded-xl border border-orange-100">
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl"
+              style={{
+                background: "linear-gradient(135deg, rgba(251,146,60,0.22), rgba(251,146,60,0.1))",
+                border: "1px solid rgba(251,146,60,0.3)",
+                backdropFilter: "blur(12px)"
+              }}>
               <Flame size={18} className="text-orange-500" />
               <span className="text-sm font-bold text-orange-700">{streak} dagar</span>
             </div>
           )}
-          <div className="flex items-center gap-2 bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-100">
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl"
+            style={{
+              background: "linear-gradient(135deg, rgba(16,185,129,0.22), rgba(16,185,129,0.1))",
+              border: "1px solid rgba(16,185,129,0.3)",
+              backdropFilter: "blur(12px)"
+            }}>
             <Sparkles size={18} className="text-emerald-500" />
             <span className="text-sm font-bold text-emerald-700">{xp} XP</span>
           </div>
@@ -1052,60 +1624,23 @@ const Dashboard = ({ profile, setPage, xp, addXp, streak }) => {
 
       {/* Stats row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card hover={false} className="!p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ background: `${DISC_COLORS[profile?.discType]}12` }}>
-              <span className="text-xl">{DISC_EMOJI[profile?.discType]}</span>
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">DISC-typ</p>
-              <p className="text-lg font-bold text-gray-900">{DISC_SHORT[profile?.discType]}</p>
-            </div>
-          </div>
-        </Card>
-        <Card hover={false} className="!p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-amber-50 flex items-center justify-center">
-              <Crown size={20} className="text-amber-600" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">Nivå</p>
-              <p className="text-lg font-bold" style={{ color: level.color }}>{level.name}</p>
-            </div>
-          </div>
-        </Card>
-        <Card hover={false} className="!p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-purple-50 flex items-center justify-center">
-              <Trophy size={20} className="text-purple-600" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">Quiz-score</p>
-              <p className="text-lg font-bold text-gray-900">{quizScores.length > 0 ? `${Math.round(quizScores.reduce((a,b) => a + (b.score/b.maxScore*100), 0) / quizScores.length)}%` : "—"}</p>
-            </div>
-          </div>
-        </Card>
-        <Card hover={false} className="!p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-blue-50 flex items-center justify-center">
-              <Target size={20} className="text-blue-600" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">Till nästa nivå</p>
-              <p className="text-lg font-bold text-gray-900">{progress.xpToNext} XP</p>
-            </div>
-          </div>
-        </Card>
+        <StatChip label="DISC-typ" value={DISC_SHORT[profile?.discType]} color={DISC_COLORS[profile?.discType]} emoji={DISC_EMOJI[profile?.discType]} />
+        <StatChip icon={Crown} label="Nivå" value={level.name} color={level.color} />
+        <StatChip icon={Trophy} label="Quiz-score" value={quizScores.length > 0 ? `${Math.round(quizScores.reduce((a,b) => a + (b.score/b.maxScore*100), 0) / quizScores.length)}%` : "—"} color="#8b5cf6" />
+        <StatChip icon={Target} label="Till nästa nivå" value={`${progress.xpToNext} XP`} color="#3b82f6" />
       </div>
 
       {/* XP Progress */}
-      <Card hover={false} className="!p-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-bold text-gray-900">{level.name}</span>
-          <span className="text-sm font-bold" style={{ color: progress.next.color }}>{progress.next.name}</span>
+      <Card hover={false} className="!p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Crown size={16} style={{ color: level.color }} />
+            <span className="text-sm font-bold" style={{ color: level.color }}>{level.name}</span>
+          </div>
+          <span className="text-sm font-bold" style={{ color: progress.next.color }}>{progress.next.name} →</span>
         </div>
         <ProgressBar value={progress.progress} color={level.color} height="h-3" />
-        <p className="text-xs text-gray-400 mt-2 text-center">{Math.round(progress.progress)}% — {progress.xpToNext} XP kvar</p>
+        <p className="text-xs text-gray-400 mt-2.5 text-center">{Math.round(progress.progress)}% • {progress.xpToNext} XP kvar till nästa nivå</p>
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1129,15 +1664,23 @@ const Dashboard = ({ profile, setPage, xp, addXp, streak }) => {
               { label: "Quiz", desc: "Testa dina kunskaper", icon: Brain, page: "training", color: T.purple },
               { label: "Samtalsguide", desc: "Steg-för-steg blueprint", icon: Phone, page: "training", color: T.blue },
             ].map((item,i) => (
-              <button key={i} onClick={() => setPage(item.page)} className="w-full flex items-center gap-4 p-3 rounded-xl text-left transition-all hover:bg-gray-50 group active:scale-[0.99]">
-                <div className="w-10 h-10 rounded-lg flex items-center justify-center transition-all" style={{ background: `${item.color}12` }}>
-                  <item.icon size={18} style={{ color: item.color }} />
+              <button key={i} onClick={() => setPage(item.page)}
+                className="w-full flex items-center gap-4 p-3 rounded-2xl text-left transition-all group active:scale-[0.99]"
+                style={{ background: "transparent" }}
+                onMouseEnter={e => e.currentTarget.style.background = `${item.color}10`}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <div className="w-11 h-11 rounded-2xl flex items-center justify-center"
+                  style={{
+                    background: `linear-gradient(135deg, ${item.color}25, ${item.color}10)`,
+                    boxShadow: `inset 0 0 0 1px ${item.color}30`
+                  }}>
+                  <item.icon size={19} style={{ color: item.color }} />
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-semibold text-gray-900">{item.label}</p>
                   <p className="text-xs text-gray-400">{item.desc}</p>
                 </div>
-                <ChevronRight size={16} className="text-gray-200 group-hover:text-gray-400" />
+                <ChevronRight size={16} className="text-gray-300 group-hover:text-gray-600 transition-colors" />
               </button>
             ))}
           </div>
@@ -1151,8 +1694,19 @@ const Dashboard = ({ profile, setPage, xp, addXp, streak }) => {
           {BADGES.slice(0, 5).map(badge => {
             const earned = xp >= badge.xpReq;
             return (
-              <div key={badge.id} className={`text-center p-3 rounded-xl ${earned ? "bg-emerald-50 border border-emerald-100" : "bg-gray-50 opacity-40"}`}>
-                <div className="text-2xl mb-1">{badge.icon}</div>
+              <div key={badge.id} className="text-center p-4 rounded-2xl transition-all"
+                style={earned ? {
+                  background: "linear-gradient(135deg, rgba(16,185,129,0.18), rgba(16,185,129,0.06))",
+                  border: "1px solid rgba(16,185,129,0.3)",
+                  boxShadow: "0 8px 20px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.4)"
+                } : {
+                  background: "rgba(255,255,255,0.3)",
+                  border: "1px solid rgba(15,23,42,0.05)",
+                  opacity: 0.45
+                }}>
+                <div className="text-3xl mb-1" style={earned ? { filter: "drop-shadow(0 2px 6px rgba(16,185,129,0.3))" } : { filter: "grayscale(0.5)" }}>
+                  {badge.icon}
+                </div>
                 <p className="text-xs font-bold text-gray-900">{badge.name}</p>
               </div>
             );
@@ -1169,20 +1723,30 @@ const Dashboard = ({ profile, setPage, xp, addXp, streak }) => {
 const ChatMessage = ({ msg, dark, assistantName, assistantIcon: Icon, assistantColor, profileInitial, profileColor }) => {
   const isUser = msg.role === "user";
   return (
-    <div className={`py-6 px-4 ${!isUser ? dark ? "bg-gray-800/40" : "bg-gray-50/70" : ""}`}>
+    <div className="py-5 px-6">
       <div className="max-w-2xl mx-auto flex gap-4">
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-sm font-bold ${
-          isUser
-            ? "text-white"
-            : dark ? "bg-emerald-900/50 border border-emerald-700" : "bg-emerald-50 border border-emerald-200"
-        }`} style={isUser ? { background: profileColor || T.primary } : {}}>
-          {isUser ? (profileInitial || "?") : <Icon size={16} className={dark ? "text-emerald-400" : "text-emerald-600"} />}
+        <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-sm font-bold"
+          style={isUser ? {
+            background: `linear-gradient(135deg, ${profileColor || T.primary}, ${profileColor || T.primary}cc)`,
+            color: "white",
+            boxShadow: `0 6px 16px ${profileColor || T.primary}50`
+          } : {
+            background: `linear-gradient(135deg, ${assistantColor || T.primary}22, ${assistantColor || T.primary}08)`,
+            border: `1px solid ${assistantColor || T.primary}35`,
+            boxShadow: `0 4px 12px ${assistantColor || T.primary}20, inset 0 1px 0 rgba(255,255,255,0.4)`
+          }}>
+          {isUser ? (profileInitial || "?") : <Icon size={17} style={{ color: assistantColor || T.primary }} />}
         </div>
         <div className="flex-1 min-w-0">
-          <p className={`text-xs font-semibold mb-1.5 ${dark ? "text-gray-400" : "text-gray-500"}`}>
+          <p className="text-xs font-semibold mb-1.5 text-gray-500">
             {isUser ? "Du" : assistantName}
           </p>
-          <div className={`text-sm leading-relaxed whitespace-pre-wrap ${dark ? "text-gray-200" : "text-gray-800"}`}>
+          <div className={`rounded-2xl px-4 py-3 ${isUser ? "" : "glass"} text-sm leading-relaxed whitespace-pre-wrap text-gray-800`}
+            style={isUser ? {
+              background: "linear-gradient(135deg, rgba(16,185,129,0.15), rgba(6,182,212,0.1))",
+              border: "1px solid rgba(16,185,129,0.2)",
+              backdropFilter: "blur(12px)"
+            } : {}}>
             {msg.text}
           </div>
         </div>
@@ -1192,57 +1756,67 @@ const ChatMessage = ({ msg, dark, assistantName, assistantIcon: Icon, assistantC
 };
 
 const ChatInput = ({ input, setInput, onSend, loading, dark, placeholder, suggestions, showSuggestions }) => (
-  <div className={`border-t p-4 ${dark ? "border-gray-700/50 bg-gray-900/80" : "border-gray-100 bg-white/80"} backdrop-blur-sm`}>
+  <div className="p-4 relative">
     <div className="max-w-2xl mx-auto">
       {showSuggestions && (
         <div className="flex gap-2 flex-wrap mb-3">
           {suggestions.map((s, i) => (
-            <button key={i} onClick={() => setInput(s)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border ${
-              dark
-                ? "bg-gray-800 text-emerald-400 border-gray-700 hover:bg-gray-700 hover:border-emerald-700"
-                : "bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100"
-            }`}>{s}</button>
+            <button key={i} onClick={() => setInput(s)}
+              className="px-3.5 py-2 rounded-full text-xs font-medium transition-all text-emerald-700 hover:scale-[1.03] active:scale-[0.97]"
+              style={{
+                background: "linear-gradient(135deg, rgba(16,185,129,0.18), rgba(6,182,212,0.12))",
+                border: "1px solid rgba(16,185,129,0.25)",
+                backdropFilter: "blur(12px)",
+                boxShadow: "0 4px 12px rgba(16,185,129,0.12)"
+              }}>{s}</button>
           ))}
         </div>
       )}
-      <div className={`flex gap-2 items-end rounded-2xl border p-2 transition-colors ${
-        dark ? "bg-gray-800 border-gray-700 focus-within:border-emerald-600" : "bg-gray-50 border-gray-200 focus-within:border-emerald-400"
-      }`}>
+      <div className="glass-input flex gap-2 items-end rounded-[22px] p-2">
         <textarea
           value={input}
           onChange={e => { setInput(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
           placeholder={placeholder}
           rows={1}
-          className={`flex-1 px-3 py-2 bg-transparent resize-none focus:outline-none text-sm leading-relaxed ${dark ? "text-gray-100 placeholder-gray-500" : "text-gray-900 placeholder-gray-400"}`}
+          className="flex-1 px-3 py-2 bg-transparent resize-none focus:outline-none text-sm leading-relaxed text-gray-900 placeholder-gray-400"
           style={{ maxHeight: "120px" }}
         />
         <button onClick={onSend} disabled={loading || !input.trim()}
-          className={`p-2.5 rounded-xl transition-all shrink-0 ${
-            !input.trim() || loading
-              ? dark ? "bg-gray-700 text-gray-500" : "bg-gray-200 text-gray-400"
-              : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
-          }`}>
+          className="p-3 rounded-[16px] transition-all shrink-0 disabled:opacity-40"
+          style={input.trim() && !loading ? {
+            background: "linear-gradient(135deg, #10b981, #059669)",
+            color: "white",
+            boxShadow: "0 6px 18px rgba(16,185,129,0.45)"
+          } : {
+            background: "rgba(15,23,42,0.08)",
+            color: "rgb(148,163,184)"
+          }}>
           <ArrowRight size={16} />
         </button>
       </div>
-      <p className={`text-center text-xs mt-2 ${dark ? "text-gray-600" : "text-gray-300"}`}>AI kan göra misstag — dubbelkolla viktig info</p>
+      <p className="text-center text-xs mt-2 text-gray-400">AI kan göra misstag — dubbelkolla viktig info</p>
     </div>
   </div>
 );
 
-const TypingIndicator = ({ dark, assistantName, assistantIcon: Icon }) => (
-  <div className={`py-6 px-4 ${dark ? "bg-gray-800/40" : "bg-gray-50/70"}`}>
+const TypingIndicator = ({ dark, assistantName, assistantIcon: Icon, assistantColor }) => (
+  <div className="py-5 px-6">
     <div className="max-w-2xl mx-auto flex gap-4">
-      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-emerald-900/50 border border-emerald-700" : "bg-emerald-50 border border-emerald-200"}`}>
-        <Icon size={16} className={dark ? "text-emerald-400" : "text-emerald-600"} />
+      <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+        style={{
+          background: `linear-gradient(135deg, ${assistantColor || T.primary}22, ${assistantColor || T.primary}08)`,
+          border: `1px solid ${assistantColor || T.primary}35`,
+          boxShadow: `0 4px 12px ${assistantColor || T.primary}20`
+        }}>
+        <Icon size={17} style={{ color: assistantColor || T.primary }} />
       </div>
       <div className="flex-1">
-        <p className={`text-xs font-semibold mb-1.5 ${dark ? "text-gray-400" : "text-gray-500"}`}>{assistantName}</p>
-        <div className="flex items-center gap-1.5 pt-1">
-          <div className={`w-2 h-2 rounded-full typing-dot ${dark ? "bg-emerald-500" : "bg-emerald-400"}`} />
-          <div className={`w-2 h-2 rounded-full typing-dot ${dark ? "bg-emerald-500" : "bg-emerald-400"}`} />
-          <div className={`w-2 h-2 rounded-full typing-dot ${dark ? "bg-emerald-500" : "bg-emerald-400"}`} />
+        <p className="text-xs font-semibold mb-1.5 text-gray-500">{assistantName}</p>
+        <div className="glass inline-flex items-center gap-1.5 px-4 py-3 rounded-2xl">
+          <div className="w-2 h-2 rounded-full typing-dot" style={{ background: assistantColor || T.primary }} />
+          <div className="w-2 h-2 rounded-full typing-dot" style={{ background: assistantColor || T.primary }} />
+          <div className="w-2 h-2 rounded-full typing-dot" style={{ background: assistantColor || T.primary }} />
         </div>
       </div>
     </div>
@@ -1275,21 +1849,25 @@ const AiCoachPage = ({ profile, addXp, dark }) => {
 
   return (
     <div className="flex flex-col h-screen animate-fadeIn">
-      <div className={`flex-1 overflow-y-auto ${dark ? "bg-gray-900" : "bg-white"}`}>
+      <div className="flex-1 overflow-y-auto">
         {messages.length <= 1 && (
-          <div className="flex flex-col items-center justify-center pt-16 pb-8 px-4">
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${dark ? "bg-emerald-900/30 border border-emerald-800" : "bg-emerald-50 border border-emerald-200"}`}>
-              <Bot size={28} className={dark ? "text-emerald-400" : "text-emerald-600"} />
+          <div className="flex flex-col items-center justify-center pt-20 pb-8 px-4">
+            <div className="w-20 h-20 rounded-[24px] flex items-center justify-center mb-5 glow-pulse"
+              style={{
+                background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+                boxShadow: "0 20px 50px rgba(16,185,129,0.45), inset 0 1px 0 rgba(255,255,255,0.3)"
+              }}>
+              <Bot size={32} className="text-white" />
             </div>
-            <h2 className={`text-xl font-bold mb-1 ${dark ? "text-gray-100" : "text-gray-900"}`}>AI Säljcoach</h2>
-            <p className={`text-sm ${dark ? "text-gray-500" : "text-gray-400"}`}>Personlig coaching anpassad efter din DISC-profil</p>
+            <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight mb-1">AI Säljcoach</h2>
+            <p className="text-sm text-gray-500">Personlig coaching anpassad efter din DISC-profil</p>
           </div>
         )}
         {messages.map((msg, i) => (
           <ChatMessage key={i} msg={msg} dark={dark} assistantName="AI Säljcoach" assistantIcon={Bot}
             assistantColor={T.primary} profileInitial={profile?.name?.[0]} profileColor={DISC_COLORS[profile?.discType]} />
         ))}
-        {loading && <TypingIndicator dark={dark} assistantName="AI Säljcoach" assistantIcon={Bot} />}
+        {loading && <TypingIndicator dark={dark} assistantName="AI Säljcoach" assistantIcon={Bot} assistantColor={T.primary} />}
         <div ref={endRef} />
       </div>
       <ChatInput input={input} setInput={setInput} onSend={handleSend} loading={loading} dark={dark}
@@ -1327,21 +1905,25 @@ const AiBatteryExpertPage = ({ profile, addXp, dark }) => {
 
   return (
     <div className="flex flex-col h-screen animate-fadeIn">
-      <div className={`flex-1 overflow-y-auto ${dark ? "bg-gray-900" : "bg-white"}`}>
+      <div className="flex-1 overflow-y-auto">
         {messages.length <= 1 && (
-          <div className="flex flex-col items-center justify-center pt-16 pb-8 px-4">
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${dark ? "bg-green-900/30 border border-green-800" : "bg-green-50 border border-green-200"}`}>
-              <Battery size={28} className={dark ? "text-green-400" : "text-green-600"} />
+          <div className="flex flex-col items-center justify-center pt-20 pb-8 px-4">
+            <div className="w-20 h-20 rounded-[24px] flex items-center justify-center mb-5 glow-pulse"
+              style={{
+                background: "linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)",
+                boxShadow: "0 20px 50px rgba(6,182,212,0.45), inset 0 1px 0 rgba(255,255,255,0.3)"
+              }}>
+              <Battery size={30} className="text-white" />
             </div>
-            <h2 className={`text-xl font-bold mb-1 ${dark ? "text-gray-100" : "text-gray-900"}`}>AI Batteriexpert</h2>
-            <p className={`text-sm ${dark ? "text-gray-500" : "text-gray-400"}`}>Produktkunskap, priser och provision</p>
+            <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight mb-1">AI Batteriexpert</h2>
+            <p className="text-sm text-gray-500">Produktkunskap, priser och provision</p>
           </div>
         )}
         {messages.map((msg, i) => (
           <ChatMessage key={i} msg={msg} dark={dark} assistantName="AI Batteriexpert" assistantIcon={Battery}
-            assistantColor="#059669" profileInitial={profile?.name?.[0]} profileColor={DISC_COLORS[profile?.discType]} />
+            assistantColor="#0891b2" profileInitial={profile?.name?.[0]} profileColor={DISC_COLORS[profile?.discType]} />
         ))}
-        {loading && <TypingIndicator dark={dark} assistantName="AI Batteriexpert" assistantIcon={Battery} />}
+        {loading && <TypingIndicator dark={dark} assistantName="AI Batteriexpert" assistantIcon={Battery} assistantColor="#0891b2" />}
         <div ref={endRef} />
       </div>
       <ChatInput input={input} setInput={setInput} onSend={handleSend} loading={loading} dark={dark}
@@ -1372,18 +1954,59 @@ const TrainingPage = ({ profile, addXp }) => {
     return (
       <div>
         <button onClick={() => setSection("overview")} className="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-6"><ChevronLeft size={16} /> Tillbaka</button>
-        <h2 className="text-2xl font-extrabold text-gray-900 mb-2">SPIN Frågebatteri</h2>
+        <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">SPIN Frågebatteri</h2>
         <p className="text-gray-500 text-sm mb-6">Den som ställer frågorna styr samtalet</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">{phases.map(p => (
-          <button key={p.key} onClick={()=>setPhase(p.key)} className="p-4 rounded-xl text-left transition-all border-2" style={phase===p.key?{borderColor:p.color,background:`${p.color}08`}:{borderColor:"#F3F4F6"}}>
-            <p.icon size={18} style={{color:p.color}} /><div className="font-bold text-sm mt-2 text-gray-900">{p.name}</div><div className="text-xs text-gray-400 mt-0.5">{SPIN_QUESTIONS[p.key].length} frågor</div>
+          <button key={p.key} onClick={()=>setPhase(p.key)}
+            className="p-5 rounded-2xl text-left transition-all"
+            style={phase===p.key ? {
+              background: `linear-gradient(135deg, ${p.color}22, ${p.color}0a)`,
+              border: `1px solid ${p.color}45`,
+              boxShadow: `0 6px 20px ${p.color}25, inset 0 1px 0 rgba(255,255,255,0.3)`,
+              backdropFilter: "blur(12px)"
+            } : {
+              background: "rgba(255,255,255,0.45)",
+              border: "1px solid rgba(15,23,42,0.06)",
+              backdropFilter: "blur(10px)"
+            }}>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-2"
+              style={{
+                background: `linear-gradient(135deg, ${p.color}25, ${p.color}10)`,
+                boxShadow: `inset 0 0 0 1px ${p.color}30`
+              }}>
+              <p.icon size={18} style={{color:p.color}} />
+            </div>
+            <div className="font-bold text-sm text-gray-900">{p.name}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{SPIN_QUESTIONS[p.key].length} frågor</div>
           </button>
         ))}</div>
         <div className="space-y-4">{SPIN_QUESTIONS[phase].map((q,i) => (
-          <Card key={i} hover={false}><div className="flex items-start gap-4"><span className="text-emerald-600 font-bold text-sm mt-0.5 w-6 text-right">{i+1}</span><div className="flex-1">
-            <p className="text-gray-900 font-medium mb-3">"{q.q}"</p>
-            <div className="grid md:grid-cols-2 gap-3"><div className="bg-blue-50/50 rounded-xl p-4"><div className="text-xs text-blue-600 font-semibold tracking-wide mb-1">VARFÖR</div><p className="text-gray-600 text-sm">{q.why}</p></div><div className="bg-amber-50/50 rounded-xl p-4"><div className="text-xs text-amber-600 font-semibold tracking-wide mb-1">LYSSNA EFTER</div><p className="text-gray-600 text-sm">{q.listen}</p></div></div>
-          </div></div></Card>
+          <Card key={i} hover={false}>
+            <div className="flex items-start gap-4">
+              <span className="text-emerald-600 font-bold text-sm mt-0.5 w-6 text-right shrink-0">{i+1}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-gray-900 font-semibold mb-4 leading-relaxed">"{q.q}"</p>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="rounded-2xl px-5 py-4"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(59,130,246,0.15), rgba(59,130,246,0.05))",
+                      border: "1px solid rgba(59,130,246,0.2)"
+                    }}>
+                    <div className="text-[10px] text-blue-700 font-bold tracking-wider mb-1.5">VARFÖR</div>
+                    <p className="text-gray-700 text-sm leading-relaxed">{q.why}</p>
+                  </div>
+                  <div className="rounded-2xl px-5 py-4"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.05))",
+                      border: "1px solid rgba(245,158,11,0.2)"
+                    }}>
+                    <div className="text-[10px] text-amber-700 font-bold tracking-wider mb-1.5">LYSSNA EFTER</div>
+                    <p className="text-gray-700 text-sm leading-relaxed">{q.listen}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
         ))}</div>
       </div>
     );
@@ -1399,18 +2022,46 @@ const TrainingPage = ({ profile, addXp }) => {
     return (
       <div>
         <button onClick={() => setSection("overview")} className="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-6"><ChevronLeft size={16} /> Tillbaka</button>
-        <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Invändningshantering</h2>
+        <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">Invändningshantering</h2>
         <p className="text-gray-500 text-sm mb-6">Validera först. Ställ fråga sedan. Pitcha aldrig mot invändningen.</p>
         <div className="flex flex-wrap gap-2 mb-6">{categories.map(c => (
-          <button key={c} onClick={()=>setFilter(c)} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${filter===c?"bg-emerald-600 text-white shadow-sm":"bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-100"}`}>{c}</button>
+          <button key={c} onClick={()=>setFilter(c)}
+            className="px-4 py-2 rounded-full text-xs font-bold transition-all"
+            style={filter===c ? {
+              background: "linear-gradient(135deg, #10b981, #059669)",
+              color: "white",
+              boxShadow: "0 6px 18px rgba(16,185,129,0.4), inset 0 1px 0 rgba(255,255,255,0.25)"
+            } : {
+              background: "rgba(255,255,255,0.5)",
+              color: "rgb(100,116,139)",
+              border: "1px solid rgba(15,23,42,0.08)",
+              backdropFilter: "blur(10px)"
+            }}>{c}</button>
         ))}</div>
         <div className="space-y-3">{filtered.map((o,i) => (
           <Card key={i} onClick={()=>setSelected(selected===i?null:i)}>
             <div className="flex items-center justify-between gap-3 mb-1"><span className="text-gray-900 font-bold text-sm min-w-0 break-words">"{o.inv}"</span><span className="shrink-0"><Badge text={o.kat} color={catColors[o.kat]||"#6B7280"} /></span></div>
-            {selected===i && <div className="mt-4 space-y-4">
-              <div><span className="text-gray-400 text-xs font-semibold tracking-wide">VAD KUNDEN MENAR</span><p className="text-gray-700 text-sm mt-1">{o.meaning}</p></div>
-              <div className="bg-emerald-50 rounded-xl p-4 border-l-4 border-emerald-600"><span className="text-emerald-700 text-xs font-semibold tracking-wide">EXAKT VAD DU SÄGER</span><p className="text-gray-900 text-sm mt-1 italic">{o.handling}</p></div>
-              <div className="bg-amber-50 rounded-xl p-4 border-l-4 border-amber-500"><span className="text-amber-700 text-xs font-semibold tracking-wide">UPPFÖLJNINGSFRÅGA</span><p className="text-gray-900 text-sm mt-1 italic">{o.follow}</p></div>
+            {selected===i && <div className="mt-5 space-y-3">
+              <div className="px-1">
+                <span className="text-[10px] font-bold text-gray-500 tracking-wider">VAD KUNDEN MENAR</span>
+                <p className="text-gray-700 text-sm mt-1.5 leading-relaxed">{o.meaning}</p>
+              </div>
+              <div className="rounded-2xl px-5 py-4"
+                style={{
+                  background: "linear-gradient(135deg, rgba(16,185,129,0.18), rgba(16,185,129,0.08))",
+                  border: "1px solid rgba(16,185,129,0.25)"
+                }}>
+                <span className="text-[10px] font-bold text-emerald-700 tracking-wider">EXAKT VAD DU SÄGER</span>
+                <p className="text-gray-900 text-sm mt-1.5 leading-relaxed">{o.handling}</p>
+              </div>
+              <div className="rounded-2xl px-5 py-4"
+                style={{
+                  background: "linear-gradient(135deg, rgba(245,158,11,0.18), rgba(245,158,11,0.08))",
+                  border: "1px solid rgba(245,158,11,0.25)"
+                }}>
+                <span className="text-[10px] font-bold text-amber-700 tracking-wider">UPPFÖLJNINGSFRÅGA</span>
+                <p className="text-gray-900 text-sm mt-1.5 leading-relaxed">{o.follow}</p>
+              </div>
             </div>}
           </Card>
         ))}</div>
@@ -1424,11 +2075,18 @@ const TrainingPage = ({ profile, addXp }) => {
     return (
       <div>
         <button onClick={() => setSection("overview")} className="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-6"><ChevronLeft size={16} /> Tillbaka</button>
-        <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Avslutstekniker</h2>
+        <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">Avslutstekniker</h2>
         <p className="text-gray-500 text-sm mb-6">Frågan är inte OM du går på avslut — utan VILKEN teknik och NÄR.</p>
-        {profile?.discType && <Card hover={false} className="mb-6 border-l-4" style={{borderColor:DISC_COLORS[profile.discType],background:`${DISC_COLORS[profile.discType]}05`}}>
-          <div className="text-xs font-semibold tracking-wide mb-2" style={{color:DISC_COLORS[profile.discType]}}>REKOMMENDERADE FÖR DIG ({DISC_SHORT[profile.discType]})</div>
-          <div className="space-y-1">{CLOSES.filter(c=>c.disc[profile.discType]==="PRIMÄR"||c.disc[profile.discType]==="EXTREMT EFFEKTIV").map((c,i)=>(<p key={i} className="text-gray-900 text-sm">{c.name} — <span className="text-emerald-600 font-semibold">{c.disc[profile.discType]}</span></p>))}</div>
+        {profile?.discType && <Card hover={false} className="mb-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-48 h-48 rounded-full pointer-events-none opacity-50"
+            style={{ background: `radial-gradient(circle, ${DISC_COLORS[profile.discType]}30, transparent 70%)`, filter: "blur(30px)", transform: "translate(30%, -40%)" }} />
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-2.5 h-2.5 rounded-full" style={{ background: DISC_COLORS[profile.discType], boxShadow: `0 0 10px ${DISC_COLORS[profile.discType]}` }} />
+              <div className="text-[11px] font-bold tracking-wider" style={{color: DISC_COLORS[profile.discType]}}>REKOMMENDERADE FÖR DIG ({DISC_SHORT[profile.discType]})</div>
+            </div>
+            <div className="space-y-1.5">{CLOSES.filter(c=>c.disc[profile.discType]==="PRIMÄR"||c.disc[profile.discType]==="EXTREMT EFFEKTIV").map((c,i)=>(<p key={i} className="text-gray-900 text-sm">• {c.name} <span className="text-emerald-600 font-semibold text-xs ml-1">{c.disc[profile.discType]}</span></p>))}</div>
+          </div>
         </Card>}
         <div className="space-y-3">{CLOSES.map((c,i) => (
           <Card key={i} onClick={()=>setSelected(selected===i?null:i)}>
@@ -1436,7 +2094,20 @@ const TrainingPage = ({ profile, addXp }) => {
               {profile?.discType && <Badge text={c.disc[profile.discType]} color={DISC_COLORS[profile.discType]} />}
               <Badge text={c.difficulty} color={c.difficulty==="LÄTT"?"#059669":c.difficulty==="MEDEL"?"#D97706":"#EF4444"} />
             </div></div><p className="text-gray-500 text-xs">{c.desc}</p>
-            {selected===i && <div className="mt-4 space-y-3"><div className="bg-emerald-50 rounded-xl p-4"><span className="text-emerald-700 text-xs font-semibold tracking-wide">EXAKT VAD DU SÄGER</span><p className="text-gray-900 text-sm mt-1 italic">{c.example}</p></div><div><span className="text-gray-400 text-xs font-semibold tracking-wide">KÖPSIGNAL</span><p className="text-gray-700 text-sm mt-1">{c.signal}</p></div></div>}
+            {selected===i && <div className="mt-5 space-y-3">
+              <div className="rounded-2xl px-5 py-4"
+                style={{
+                  background: "linear-gradient(135deg, rgba(16,185,129,0.18), rgba(16,185,129,0.08))",
+                  border: "1px solid rgba(16,185,129,0.25)"
+                }}>
+                <span className="text-[10px] font-bold text-emerald-700 tracking-wider">EXAKT VAD DU SÄGER</span>
+                <p className="text-gray-900 text-sm mt-1.5 leading-relaxed">{c.example}</p>
+              </div>
+              <div className="px-1">
+                <span className="text-[10px] font-bold text-gray-500 tracking-wider">KÖPSIGNAL</span>
+                <p className="text-gray-700 text-sm mt-1.5 leading-relaxed">{c.signal}</p>
+              </div>
+            </div>}
           </Card>
         ))}</div>
       </div>
@@ -1461,47 +2132,101 @@ const TrainingPage = ({ profile, addXp }) => {
     return (
       <div>
         <button onClick={() => setSection("overview")} className="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-6"><ChevronLeft size={16} /> Tillbaka</button>
-        <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Samtalsguide</h2>
+        <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">Samtalsguide</h2>
         <p className="text-gray-500 text-sm mb-6">Steg-för-steg blueprint för varje samtal</p>
-        <div className="flex gap-2 mb-6">{[1,2,3].map(n => <button key={n} onClick={()=>{setActiveCall(n);setActiveStep(0);setExpandedDetails({});}} className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${activeCall===n?"bg-emerald-600 text-white shadow-sm":"bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-100"}`}>Samtal {n}</button>)}</div>
-        <Card hover={false} className="mb-5"><h3 className="text-lg font-bold text-gray-900">{bp.title}</h3><p className="text-gray-500 text-sm mt-1">{bp.subtitle}</p><Badge text={bp.timing} color={T.primary} /></Card>
+        <div className="flex gap-2 mb-6">{[1,2,3].map(n => <button key={n} onClick={()=>{setActiveCall(n);setActiveStep(0);setExpandedDetails({});}}
+          className="px-5 py-2.5 rounded-full text-sm font-bold transition-all"
+          style={activeCall===n ? {
+            background: "linear-gradient(135deg, #10b981, #059669)", color: "white",
+            boxShadow: "0 6px 18px rgba(16,185,129,0.4), inset 0 1px 0 rgba(255,255,255,0.25)"
+          } : {
+            background: "rgba(255,255,255,0.5)", color: "rgb(100,116,139)",
+            border: "1px solid rgba(15,23,42,0.08)", backdropFilter: "blur(10px)"
+          }}>Samtal {n}</button>)}</div>
+        <Card hover={false} className="mb-5">
+          <h3 className="text-xl font-bold text-gray-900 mb-1">{bp.title}</h3>
+          <p className="text-gray-500 text-sm mb-3">{bp.subtitle}</p>
+          <Badge text={bp.timing} color={T.primary} />
+        </Card>
         <div className="grid lg:grid-cols-4 gap-5">
-          <div className="space-y-1">{bp.sections.map((s,i) => <button key={i} onClick={()=>{setActiveStep(i);setExpandedDetails({});}} className={`w-full text-left px-4 py-3 rounded-xl text-xs transition-all ${activeStep===i?"bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold":"bg-white border border-gray-100 text-gray-500 hover:bg-gray-50"}`}><div className="font-bold">{s.name}</div><div className="text-gray-400 mt-0.5">{s.time}</div></button>)}</div>
+          <div className="space-y-2">{bp.sections.map((s,i) => <button key={i} onClick={()=>{setActiveStep(i);setExpandedDetails({});}}
+            className="w-full text-left px-4 py-3 rounded-2xl text-xs transition-all"
+            style={activeStep===i ? {
+              background: "linear-gradient(135deg, rgba(16,185,129,0.18), rgba(16,185,129,0.08))",
+              border: "1px solid rgba(16,185,129,0.3)",
+              color: "rgb(4, 120, 87)",
+              backdropFilter: "blur(10px)",
+              boxShadow: "0 4px 14px rgba(16,185,129,0.15)"
+            } : {
+              background: "rgba(255,255,255,0.45)",
+              border: "1px solid rgba(15,23,42,0.06)",
+              color: "rgb(100,116,139)",
+              backdropFilter: "blur(10px)"
+            }}>
+            <div className="font-bold">{s.name}</div>
+            <div className="mt-0.5 opacity-70">{s.time}</div>
+          </button>)}</div>
           <div className="lg:col-span-3"><Card hover={false}>
-            <div className="flex items-center justify-between mb-4"><h4 className="text-lg font-bold text-gray-900">{section.name}</h4><Badge text={section.time} color={T.gold} /></div>
-            <p className="text-emerald-600 text-sm font-bold mb-4">MÅL: {section.goal}</p>
-            <div className="space-y-2 mb-6">{section.steps.map((step,i) => <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-gray-50"><span className="text-emerald-600 font-bold text-sm mt-0.5">{i+1}.</span><span className="text-gray-700 text-sm">{step}</span></div>)}</div>
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-xl font-bold text-gray-900">{section.name}</h4>
+              <Badge text={section.time} color={T.gold} />
+            </div>
+            <p className="text-emerald-600 text-sm font-bold mb-5">MÅL: {section.goal}</p>
+            <div className="space-y-2 mb-6">{section.steps.map((step,i) => (
+              <div key={i} className="flex items-start gap-3 px-4 py-3 rounded-2xl"
+                style={{
+                  background: "rgba(255,255,255,0.4)",
+                  border: "1px solid rgba(15,23,42,0.05)",
+                  backdropFilter: "blur(8px)"
+                }}>
+                <span className="text-emerald-600 font-bold text-sm mt-0.5">{i+1}.</span>
+                <span className="text-gray-800 text-sm leading-relaxed">{step}</span>
+              </div>
+            ))}</div>
 
             {section.details && section.details.length > 0 && (
-              <div className="border-t pt-6">
-                <p className="text-xs font-bold text-gray-500 mb-3 uppercase">EXPANDERAD GUIDE</p>
+              <div className="pt-5" style={{ borderTop: "1px solid rgba(15,23,42,0.06)" }}>
+                <p className="text-[11px] font-bold text-gray-500 mb-3 tracking-wider">EXPANDERAD GUIDE</p>
                 <div className="space-y-2">
                   {section.details.map((detail) => (
-                    <div key={detail.id} className="border border-gray-100 rounded-xl overflow-hidden">
+                    <div key={detail.id} className="rounded-2xl overflow-hidden"
+                      style={{
+                        background: "rgba(255,255,255,0.45)",
+                        border: "1px solid rgba(15,23,42,0.06)",
+                        backdropFilter: "blur(10px)"
+                      }}>
                       <button
                         onClick={() => toggleDetail(detail.id)}
-                        className="w-full text-left p-3 hover:bg-gray-50 transition-colors flex items-center justify-between"
+                        className="w-full text-left px-4 py-3.5 transition-colors flex items-center justify-between gap-3 hover:bg-white/40"
                       >
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-sm font-semibold text-gray-900">{detail.action}</p>
                           {detail.id && <p className="text-xs text-gray-400 mt-0.5">ID: {detail.id}</p>}
                         </div>
-                        {expandedDetails[detail.id] ? <ChevronUp size={16} className="text-emerald-600" /> : <ChevronDown size={16} className="text-gray-400" />}
+                        {expandedDetails[detail.id] ? <ChevronUp size={16} className="text-emerald-600 shrink-0" /> : <ChevronDown size={16} className="text-gray-400 shrink-0" />}
                       </button>
 
                       {expandedDetails[detail.id] && (
-                        <div className="bg-gray-50 border-t border-gray-100 p-4 space-y-3">
-                          <div>
-                            <p className="text-xs font-bold text-gray-500 mb-1">HUR</p>
-                            <p className="text-sm text-gray-700">{detail.how}</p>
+                        <div className="px-4 pb-4 pt-1 space-y-3" style={{ borderTop: "1px solid rgba(15,23,42,0.06)" }}>
+                          <div className="pt-3">
+                            <p className="text-[10px] font-bold text-gray-500 tracking-wider mb-1.5">HUR</p>
+                            <p className="text-sm text-gray-700 leading-relaxed">{detail.how}</p>
                           </div>
-                          <div className="bg-green-50 border border-green-100 rounded-lg p-3">
-                            <p className="text-xs font-bold text-green-700 mb-1">SCRIPT</p>
-                            <p className="text-sm text-gray-800 italic">{detail.script}</p>
+                          <div className="rounded-xl px-4 py-3"
+                            style={{
+                              background: "linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.06))",
+                              border: "1px solid rgba(16,185,129,0.2)"
+                            }}>
+                            <p className="text-[10px] font-bold text-emerald-700 tracking-wider mb-1">SCRIPT</p>
+                            <p className="text-sm text-gray-800 leading-relaxed">{detail.script}</p>
                           </div>
-                          <div className="bg-amber-50 border border-amber-100 rounded-lg p-3">
-                            <p className="text-xs font-bold text-amber-700 mb-1">LYSSNA PÅ</p>
-                            <p className="text-sm text-gray-800">{detail.listen}</p>
+                          <div className="rounded-xl px-4 py-3"
+                            style={{
+                              background: "linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.06))",
+                              border: "1px solid rgba(245,158,11,0.2)"
+                            }}>
+                            <p className="text-[10px] font-bold text-amber-700 tracking-wider mb-1">LYSSNA PÅ</p>
+                            <p className="text-sm text-gray-800 leading-relaxed">{detail.listen}</p>
                           </div>
                         </div>
                       )}
@@ -1524,101 +2249,445 @@ const TrainingPage = ({ profile, addXp }) => {
     const types = ["R", "Y", "Gr", "B"];
     const p = DISC_PROFILES[selected];
     const full = DISC_PROFILES_FULL[selected];
+    const userFull = DISC_PROFILES_FULL[profile?.discType];
+    const personalAdvice = userFull?.matrix?.[selected];
+    const isSelf = profile?.discType === selected;
+
     return (
       <div>
         <button onClick={() => setSection("overview")} className="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-6"><ChevronLeft size={16} /> Tillbaka</button>
-        <h2 className="text-2xl font-extrabold text-gray-900 mb-2">DISC & Kundtyper</h2>
-        <p className="text-gray-500 text-sm mb-6">Förstå och anpassa dig till varje personlighetstyp</p>
-        <div className="grid grid-cols-4 gap-3 mb-6">{types.map(t => (
-          <button key={t} onClick={()=>setSelected(t)} className="p-4 rounded-xl text-center transition-all border-2" style={selected===t?{borderColor:DISC_COLORS[t],background:`${DISC_COLORS[t]}08`}:{borderColor:"#F3F4F6"}}>
-            <div className="text-2xl mb-1">{DISC_EMOJI[t]}</div>
-            <div className="font-bold text-sm text-gray-900">{DISC_SHORT[t]}</div>
-          </button>
-        ))}</div>
-        <Card hover={false} className="mb-4">
-          <h3 className="text-lg font-bold text-gray-900 mb-1">{p.name}</h3>
-          <p className="text-sm text-gray-600 mb-4">{full.oneLiner}</p>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div><p className="text-xs font-bold text-gray-400 mb-2">KÄNNER IGEN</p><p className="text-sm text-gray-700">{p.recognize}</p></div>
-            <div><p className="text-xs font-bold text-gray-400 mb-2">DRIVKRAFT</p><p className="text-sm text-gray-700">{p.drive}</p></div>
-            <div><p className="text-xs font-bold text-gray-400 mb-2">RÄDSLA</p><p className="text-sm text-gray-700">{p.fear}</p></div>
-            <div><p className="text-xs font-bold text-gray-400 mb-2">TEMPO</p><p className="text-sm text-gray-700">{p.tempo}</p></div>
+        <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">DISC & Kundtyper</h2>
+        <p className="text-gray-500 text-sm mb-8">Förstå och anpassa dig till varje personlighetstyp</p>
+
+        {/* Lamp selector */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">{types.map(t => {
+          const active = selected === t;
+          const color = DISC_COLORS[t];
+          return (
+            <button key={t} onClick={()=>setSelected(t)}
+              className="p-6 rounded-[24px] text-center transition-all relative overflow-hidden active:scale-[0.98]"
+              style={active ? {
+                background: `linear-gradient(135deg, ${color}1a, ${color}08)`,
+                border: `1.5px solid ${color}50`,
+                boxShadow: `0 12px 40px ${color}30, inset 0 1px 0 rgba(255,255,255,0.4)`,
+                backdropFilter: "blur(16px)"
+              } : {
+                background: "rgba(255,255,255,0.45)",
+                border: "1px solid rgba(15,23,42,0.06)",
+                backdropFilter: "blur(12px)"
+              }}>
+              {/* Glow behind lamp */}
+              {active && (
+                <div className="absolute inset-0 pointer-events-none"
+                  style={{ background: `radial-gradient(circle at 50% 40%, ${color}30, transparent 60%)` }} />
+              )}
+              {/* Lamp orb */}
+              <div className="relative mx-auto mb-3 flex items-center justify-center"
+                style={{ width: 56, height: 56 }}>
+                {/* Outer halo */}
+                <div className="absolute inset-0 rounded-full glow-pulse"
+                  style={{
+                    background: `radial-gradient(circle, ${color}${active ? '80' : '30'}, transparent 70%)`,
+                    filter: `blur(${active ? '14px' : '8px'})`,
+                    transform: active ? "scale(1.4)" : "scale(1)"
+                  }} />
+                {/* Orb */}
+                <div className="relative rounded-full"
+                  style={{
+                    width: active ? 40 : 32,
+                    height: active ? 40 : 32,
+                    background: `radial-gradient(circle at 30% 25%, ${color}ff, ${color}cc 45%, ${color}88 100%)`,
+                    boxShadow: active
+                      ? `0 0 0 1px ${color}40, 0 8px 24px ${color}80, inset 0 2px 6px rgba(255,255,255,0.6), inset 0 -4px 8px rgba(0,0,0,0.2)`
+                      : `0 4px 12px ${color}40, inset 0 2px 4px rgba(255,255,255,0.4), inset 0 -2px 4px rgba(0,0,0,0.15)`,
+                    transition: "all 0.35s cubic-bezier(0.2, 0.8, 0.2, 1)"
+                  }}>
+                  {/* Specular highlight */}
+                  <div className="absolute rounded-full"
+                    style={{
+                      top: "15%", left: "22%",
+                      width: "30%", height: "22%",
+                      background: "radial-gradient(ellipse, rgba(255,255,255,0.85), transparent 70%)",
+                      filter: "blur(1px)"
+                    }} />
+                </div>
+              </div>
+              <div className="relative font-bold text-base tracking-tight" style={{ color: active ? color : "rgb(71,85,105)" }}>
+                {DISC_SHORT[t]}
+              </div>
+              <div className="relative text-[11px] font-medium mt-0.5" style={{ color: active ? `${color}cc` : "rgb(148,163,184)" }}>
+                {t === "R" ? "Dominant" : t === "Y" ? "Influencer" : t === "Gr" ? "Stabil" : "Analytisk"}
+              </div>
+              {isSelf && t === selected && (
+                <div className="absolute top-3 right-3 px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wider"
+                  style={{ background: `${color}25`, color, border: `1px solid ${color}40` }}>DU</div>
+              )}
+            </button>
+          );
+        })}</div>
+
+        {/* Profile summary */}
+        <Card hover={false} className="mb-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-64 h-64 rounded-full pointer-events-none opacity-50"
+            style={{ background: `radial-gradient(circle, ${DISC_COLORS[selected]}30, transparent 70%)`, filter: "blur(30px)", transform: "translate(30%, -35%)" }} />
+          <div className="relative">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center"
+                style={{
+                  background: `radial-gradient(circle at 30% 25%, ${DISC_COLORS[selected]}, ${DISC_COLORS[selected]}cc)`,
+                  boxShadow: `0 6px 18px ${DISC_COLORS[selected]}60, inset 0 2px 4px rgba(255,255,255,0.4)`
+                }} />
+              <h3 className="text-2xl font-extrabold text-gray-900 tracking-tight">{p.name}</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-5 leading-relaxed">{full.oneLiner}</p>
+            <div className="grid md:grid-cols-2 gap-3">
+              {[
+                { label: "KÄNNER IGEN", text: p.recognize, icon: Eye },
+                { label: "DRIVKRAFT", text: p.drive, icon: Target },
+                { label: "RÄDSLA", text: p.fear, icon: Shield },
+                { label: "TEMPO", text: p.tempo, icon: Zap }
+              ].map((item, i) => (
+                <div key={i} className="glass-subtle rounded-2xl p-4">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <item.icon size={12} style={{ color: DISC_COLORS[selected] }} />
+                    <p className="text-[10px] font-bold text-gray-500 tracking-wider">{item.label}</p>
+                  </div>
+                  <p className="text-sm text-gray-800 leading-relaxed">{item.text}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </Card>
-        <Card hover={false} className="mb-4 bg-emerald-50 border-emerald-100">
-          <p className="text-xs font-bold text-emerald-700 mb-2">SÄG DETTA</p>
-          <p className="text-sm text-gray-800 italic">{p.say}</p>
-        </Card>
-        <Card hover={false} className="bg-red-50 border-red-100">
-          <p className="text-xs font-bold text-red-600 mb-2">UNDVIK</p>
-          <p className="text-sm text-gray-800">{p.avoid}</p>
-        </Card>
+
+        {/* Personal advice — how YOU (user's profile) should approach THIS customer type */}
+        {personalAdvice && !isSelf && (
+          <Card hover={false} className="mb-6 relative overflow-hidden">
+            <div className="absolute inset-0 pointer-events-none opacity-80"
+              style={{
+                background: `linear-gradient(135deg, ${DISC_COLORS[profile?.discType]}14, ${DISC_COLORS[selected]}14)`
+              }} />
+            <div className="relative">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded-full"
+                    style={{ background: DISC_COLORS[profile?.discType], boxShadow: `0 0 10px ${DISC_COLORS[profile?.discType]}` }} />
+                  <ArrowRight size={12} className="text-gray-400" />
+                  <div className="w-3 h-3 rounded-full"
+                    style={{ background: DISC_COLORS[selected], boxShadow: `0 0 10px ${DISC_COLORS[selected]}` }} />
+                </div>
+                <p className="text-[11px] font-bold tracking-wider text-gray-500">FÖR DIG SOM {DISC_SHORT[profile?.discType]?.toUpperCase()} → {DISC_SHORT[selected]?.toUpperCase()} KUND</p>
+              </div>
+              <p className="text-base font-semibold text-gray-900 leading-relaxed mb-4">{personalAdvice.text}</p>
+              <div className="rounded-2xl px-5 py-4"
+                style={{
+                  background: `linear-gradient(135deg, ${DISC_COLORS[profile?.discType]}22, ${DISC_COLORS[profile?.discType]}08)`,
+                  border: `1px solid ${DISC_COLORS[profile?.discType]}30`
+                }}>
+                <p className="text-[10px] font-bold tracking-wider mb-1.5" style={{ color: DISC_COLORS[profile?.discType] }}>DIN KALIBRERING</p>
+                <p className="text-sm text-gray-800 leading-relaxed">{userFull?.calibration}</p>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {isSelf && (
+          <Card hover={false} className="mb-6 relative overflow-hidden">
+            <div className="absolute inset-0 pointer-events-none opacity-60"
+              style={{ background: `linear-gradient(135deg, ${DISC_COLORS[selected]}18, transparent)` }} />
+            <div className="relative">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-2 h-2 rounded-full" style={{ background: DISC_COLORS[selected], boxShadow: `0 0 10px ${DISC_COLORS[selected]}` }} />
+                <p className="text-[11px] font-bold tracking-wider text-gray-500">DETTA ÄR DU</p>
+              </div>
+              <p className="text-sm text-gray-700 leading-relaxed">
+                Du läser beskrivningen av dig själv. När du möter en annan {DISC_SHORT[selected]}-kund är det en <strong>naturlig match</strong> — men också risken för maktkamp eller spegling. Välj en annan färg ovan för personlig råd när du säljer till den typen.
+              </p>
+            </div>
+          </Card>
+        )}
+
+        {/* SÄG DETTA — big green block, seamless */}
+        <div className="mb-5 rounded-[28px] px-8 py-7 relative overflow-hidden"
+          style={{
+            background: "linear-gradient(135deg, rgba(16,185,129,0.22) 0%, rgba(6,182,212,0.15) 100%)",
+            border: "1px solid rgba(16,185,129,0.35)",
+            backdropFilter: "saturate(180%) blur(20px)",
+            WebkitBackdropFilter: "saturate(180%) blur(20px)",
+            boxShadow: "0 12px 40px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.4)"
+          }}>
+          <div className="absolute top-[-20%] right-[-10%] w-80 h-80 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(16,185,129,0.35), transparent 70%)", filter: "blur(40px)" }} />
+          <div className="relative">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
+                style={{
+                  background: "linear-gradient(135deg, #10b981, #059669)",
+                  boxShadow: "0 8px 24px rgba(16,185,129,0.5), inset 0 1px 0 rgba(255,255,255,0.3)"
+                }}>
+                <CircleCheck size={22} className="text-white" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold text-emerald-700 tracking-wider">SÄG DETTA</p>
+                <p className="text-lg font-bold text-gray-900 leading-tight">Vinnande fraser till {DISC_SHORT[selected]}-kund</p>
+              </div>
+            </div>
+            <div className="divide-y divide-emerald-600/15">
+              {(p.sayMore || [p.say]).map((phrase, i) => (
+                <div key={i} className="flex gap-4 py-3.5 items-start">
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                    style={{
+                      background: "linear-gradient(135deg, #10b981, #059669)",
+                      boxShadow: "0 3px 10px rgba(16,185,129,0.45), inset 0 1px 0 rgba(255,255,255,0.3)"
+                    }}>
+                    <span className="text-[11px] font-bold text-white">{i+1}</span>
+                  </div>
+                  <p className="text-sm text-gray-800 leading-relaxed flex-1 pt-1">{phrase}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* UNDVIK — big red block, seamless */}
+        <div className="rounded-[28px] px-8 py-7 relative overflow-hidden"
+          style={{
+            background: "linear-gradient(135deg, rgba(239,68,68,0.18) 0%, rgba(236,72,153,0.12) 100%)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            backdropFilter: "saturate(180%) blur(20px)",
+            WebkitBackdropFilter: "saturate(180%) blur(20px)",
+            boxShadow: "0 12px 40px rgba(239,68,68,0.12), inset 0 1px 0 rgba(255,255,255,0.4)"
+          }}>
+          <div className="absolute top-[-20%] right-[-10%] w-80 h-80 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(239,68,68,0.3), transparent 70%)", filter: "blur(40px)" }} />
+          <div className="relative">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
+                style={{
+                  background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                  boxShadow: "0 8px 24px rgba(239,68,68,0.5), inset 0 1px 0 rgba(255,255,255,0.3)"
+                }}>
+                <X size={22} className="text-white" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold text-red-600 tracking-wider">UNDVIK</p>
+                <p className="text-lg font-bold text-gray-900 leading-tight">Deal-dödare med {DISC_SHORT[selected]}-kund</p>
+              </div>
+            </div>
+            <div className="divide-y divide-red-500/15">
+              {(p.avoidMore || [p.avoid]).map((phrase, i) => (
+                <div key={i} className="flex gap-4 py-3.5 items-start">
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                    style={{
+                      background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                      boxShadow: "0 3px 10px rgba(239,68,68,0.45), inset 0 1px 0 rgba(255,255,255,0.3)"
+                    }}>
+                    <X size={13} className="text-white" />
+                  </div>
+                  <p className="text-sm text-gray-800 leading-relaxed flex-1 pt-1">{phrase}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     );
   };
 
-  // Quiz Section
+  // Quiz Section — multi-type
   const QuizSection = () => {
-    const [started, setStarted] = useState(false);
+    const [quizTypeId, setQuizTypeId] = useState(null);
     const [current, setCurrent] = useState(0);
     const [answers, setAnswers] = useState([]);
     const [showResult, setShowResult] = useState(false);
+    const [questions, setQuestions] = useState([]);
+
+    const QUIZ_TYPES = [
+      { id: "general", name: "Allmän Säljquiz", desc: "Blandat — invändningar, closes, DISC, SPIN, produkt", icon: Brain, color: "#EC4899", count: QUIZ_QUESTIONS.length, build: () => QUIZ_QUESTIONS },
+      { id: "objections", name: "Invändningsdrill", desc: "Riktiga kundinvändningar — välj BÄST svar", icon: Shield, color: "#EF4444", count: 8, build: () => buildObjectionQuiz() },
+      { id: "disc", name: "DISC-igenkänning", desc: "Läs kunden — identifiera typen på några sekunder", icon: Users, color: "#F59E0B", count: DISC_RECOGNITION_QUIZ.length, build: () => DISC_RECOGNITION_QUIZ },
+    ];
+
+    const activeType = QUIZ_TYPES.find(t => t.id === quizTypeId);
+
+    const startQuiz = (type) => {
+      setQuestions(type.build());
+      setQuizTypeId(type.id);
+      setCurrent(0);
+      setAnswers([]);
+      setShowResult(false);
+    };
+
+    const exitQuiz = () => { setQuizTypeId(null); setCurrent(0); setAnswers([]); setShowResult(false); };
 
     const handleAnswer = (idx) => {
       const newA = [...answers, idx]; setAnswers(newA);
-      if (current < QUIZ_QUESTIONS.length - 1) setCurrent(current + 1);
+      if (current < questions.length - 1) setCurrent(current + 1);
       else {
-        const score = newA.filter((a,i) => a === QUIZ_QUESTIONS[i].correct).length;
+        const score = newA.filter((a,i) => a === questions[i].correct).length;
         const existing = JSON.parse(localStorage.getItem("salj_quiz_scores") || "[]");
-        existing.push({ type: "Säljquiz", score, maxScore: QUIZ_QUESTIONS.length, date: new Date().toISOString() });
+        existing.push({ type: activeType?.name || "Quiz", score, maxScore: questions.length, date: new Date().toISOString() });
         localStorage.setItem("salj_quiz_scores", JSON.stringify(existing));
-        addXp?.(score === QUIZ_QUESTIONS.length ? XP_ACTIONS.quiz_perfect : XP_ACTIONS.quiz_complete);
+        addXp?.(score === questions.length ? XP_ACTIONS.quiz_perfect : XP_ACTIONS.quiz_complete);
         setShowResult(true);
       }
     };
 
-    const score = answers.filter((a,i) => a === QUIZ_QUESTIONS[i]?.correct).length;
-    const pct = QUIZ_QUESTIONS.length > 0 ? Math.round((score/QUIZ_QUESTIONS.length)*100) : 0;
+    const score = answers.filter((a,i) => a === questions[i]?.correct).length;
+    const pct = questions.length > 0 ? Math.round((score/questions.length)*100) : 0;
 
-    if (!started) return (
-      <div>
-        <button onClick={() => setSection("overview")} className="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-6"><ChevronLeft size={16} /> Tillbaka</button>
-        <div className="text-center py-12">
-          <div className="w-20 h-20 bg-pink-50 rounded-2xl flex items-center justify-center mx-auto mb-4"><Brain size={36} className="text-pink-500" /></div>
-          <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Säljquiz</h2>
-          <p className="text-gray-500 mb-6">{QUIZ_QUESTIONS.length} frågor om invändningar, closes, DISC, SPIN</p>
-          <button onClick={()=>setStarted(true)} className="px-8 py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl font-bold hover:from-emerald-600 hover:to-green-700 transition-all shadow-lg shadow-emerald-500/20">Starta Quiz</button>
+    // ── Picker ──
+    if (!quizTypeId) {
+      const history = JSON.parse(localStorage.getItem("salj_quiz_scores") || "[]").slice(-5).reverse();
+      return (
+        <div className="animate-fadeIn">
+          <button onClick={() => setSection("overview")} className="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-6"><ChevronLeft size={16} /> Tillbaka</button>
+          <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">Quiz</h2>
+          <p className="text-gray-500 text-sm mb-8">Välj vilken typ av quiz du vill köra</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
+            {QUIZ_TYPES.map(type => (
+              <Card key={type.id} onClick={() => startQuiz(type)} className="group !p-7 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-48 h-48 rounded-full pointer-events-none opacity-50 group-hover:opacity-80 transition-opacity"
+                  style={{ background: `radial-gradient(circle, ${type.color}35, transparent 70%)`, filter: "blur(30px)", transform: "translate(35%, -40%)" }} />
+                <div className="relative flex flex-col gap-5 min-h-[180px]">
+                  <div className="w-16 h-16 rounded-[20px] flex items-center justify-center"
+                    style={{
+                      background: `linear-gradient(135deg, ${type.color}35, ${type.color}15)`,
+                      boxShadow: `inset 0 0 0 1px ${type.color}35, 0 10px 24px ${type.color}30, inset 0 1px 0 rgba(255,255,255,0.4)`
+                    }}>
+                    <type.icon size={28} style={{ color: type.color }} />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-lg font-bold text-gray-900 mb-1 group-hover:translate-x-0.5 transition-transform">{type.name}</h3>
+                    <p className="text-sm text-gray-500 leading-relaxed mb-3">{type.desc}</p>
+                    <Badge text={`${type.count} frågor`} color={type.color} />
+                  </div>
+                  <div className="absolute bottom-0 right-0 text-gray-300 group-hover:text-gray-500 transition-colors">
+                    <Play size={18} />
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          {history.length > 0 && (
+            <Card hover={false}>
+              <h3 className="text-sm font-bold text-gray-900 mb-3 tracking-tight">Senaste resultaten</h3>
+              <div className="divide-y divide-gray-200/30">
+                {history.map((r, i) => {
+                  const p = Math.round((r.score / r.maxScore) * 100);
+                  const col = p >= 80 ? "#059669" : p >= 60 ? "#D97706" : "#EF4444";
+                  return (
+                    <div key={i} className="flex items-center justify-between py-2.5">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ background: col, boxShadow: `0 0 8px ${col}` }} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 truncate">{r.type}</p>
+                          <p className="text-xs text-gray-400">{new Date(r.date).toLocaleDateString('sv-SE')}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-base font-bold" style={{ color: col }}>{p}%</p>
+                        <p className="text-[10px] text-gray-400">{r.score}/{r.maxScore}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          )}
         </div>
-      </div>
-    );
+      );
+    }
 
+    // ── Result ──
     if (showResult) return (
-      <div>
-        <button onClick={() => setSection("overview")} className="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-6"><ChevronLeft size={16} /> Tillbaka</button>
+      <div className="animate-fadeIn">
+        <button onClick={exitQuiz} className="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-6"><ChevronLeft size={16} /> Tillbaka</button>
         <div className="text-center mb-8">
-          <div className="text-6xl font-extrabold mb-2" style={{color: pct >= 80 ? "#059669" : pct >= 60 ? "#D97706" : "#EF4444"}}>{pct}%</div>
-          <p className="text-gray-500">{score} av {QUIZ_QUESTIONS.length} rätt — {pct >= 80 ? "Starkt!" : pct >= 60 ? "Bra grund!" : "Öva mer!"}</p>
+          <div className="text-7xl font-extrabold mb-2 tracking-tight" style={{color: pct >= 80 ? "#059669" : pct >= 60 ? "#D97706" : "#EF4444"}}>{pct}%</div>
+          <p className="text-gray-500 text-base">{score} av {questions.length} rätt — {pct >= 80 ? "Starkt!" : pct >= 60 ? "Bra grund!" : "Öva mer!"}</p>
+          <p className="text-xs text-gray-400 mt-1">{activeType?.name}</p>
         </div>
-        <div className="space-y-3">{QUIZ_QUESTIONS.map((q,i) => (
-          <Card key={i} hover={false} className={`border-l-4 ${answers[i]===q.correct ? "border-l-emerald-500" : "border-l-red-500"}`}>
-            <p className="text-sm font-medium text-gray-900 mb-2">{i+1}. {q.q}</p>
-            <p className="text-sm"><span className="text-gray-400">Ditt svar: </span><span className={answers[i]===q.correct?"text-emerald-600 font-semibold":"text-red-500"}>{q.options[answers[i]]}</span></p>
-            {answers[i]!==q.correct && <p className="text-sm"><span className="text-gray-400">Rätt: </span><span className="text-emerald-600 font-semibold">{q.options[q.correct]}</span></p>}
-            <p className="text-gray-400 text-xs mt-2">{q.explanation}</p>
-          </Card>
-        ))}</div>
-        <button onClick={()=>{setStarted(false);setCurrent(0);setAnswers([]);setShowResult(false);}} className="mt-6 px-6 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-200 transition-all">Kör igen</button>
+        <div className="space-y-3">{questions.map((q,i) => {
+          const correct = answers[i]===q.correct;
+          const accent = correct ? "#10b981" : "#ef4444";
+          return (
+            <Card key={i} hover={false} className="relative overflow-hidden">
+              <div className="absolute top-0 left-0 bottom-0 w-1 rounded-l-3xl" style={{ background: accent, boxShadow: `0 0 12px ${accent}80` }} />
+              <div className="pl-3">
+                <div className="flex items-start gap-2 mb-3">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                    style={{
+                      background: `linear-gradient(135deg, ${accent}, ${accent}cc)`,
+                      boxShadow: `0 3px 8px ${accent}55`
+                    }}>
+                    {correct ? <CircleCheck size={13} className="text-white" /> : <X size={13} className="text-white" />}
+                  </div>
+                  <p className="text-sm font-semibold text-gray-900 leading-relaxed">{i+1}. {q.q}</p>
+                </div>
+                <p className="text-sm pl-8"><span className="text-gray-400">Ditt svar: </span><span className="font-semibold" style={{ color: accent }}>{q.options[answers[i]]}</span></p>
+                {!correct && <p className="text-sm pl-8"><span className="text-gray-400">Rätt: </span><span className="text-emerald-600 font-semibold">{q.options[q.correct]}</span></p>}
+                <p className="text-gray-500 text-xs mt-2 pl-8 leading-relaxed">{q.explanation}</p>
+              </div>
+            </Card>
+          );
+        })}</div>
+        <div className="flex gap-3 mt-6">
+          <button onClick={() => { const t = activeType; if (t) startQuiz(t); }}
+            className="px-6 py-3 text-white rounded-2xl font-bold transition-all salj-btn-primary">Kör igen</button>
+          <button onClick={exitQuiz}
+            className="px-6 py-3 rounded-2xl font-medium text-gray-700 transition-all glass-subtle hover:bg-white/70">Andra quizzar</button>
+        </div>
       </div>
     );
 
-    const q = QUIZ_QUESTIONS[current];
+    const q = questions[current];
+    const accentColor = activeType?.color || "#ec4899";
     return (
-      <div>
-        <div className="flex justify-between items-center mb-2"><span className="text-sm font-bold text-gray-900">Fråga {current+1} / {QUIZ_QUESTIONS.length}</span></div>
-        <ProgressBar value={((current+1)/QUIZ_QUESTIONS.length)*100} color={T.primary} className="mb-6" />
-        <Card hover={false}><p className="text-gray-900 font-semibold mb-6">{q.q}</p><div className="space-y-3">{q.options.map((opt,i) => (
-          <button key={i} onClick={()=>handleAnswer(i)} className="w-full text-left p-4 border-2 border-gray-100 rounded-xl text-sm text-gray-900 hover:border-emerald-300 hover:bg-emerald-50/50 transition-all font-medium active:scale-[0.99]">{opt}</button>
-        ))}</div></Card>
+      <div className="max-w-3xl mx-auto min-h-[calc(100vh-8rem)] flex flex-col justify-center">
+        <div className="flex justify-between items-center mb-3">
+          <div className="flex items-center gap-2">
+            <button onClick={exitQuiz} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+            <span className="text-sm font-bold text-gray-900">Fråga {current+1} / {questions.length}</span>
+            <span className="text-xs text-gray-400">• {activeType?.name}</span>
+          </div>
+          <Badge text={`${Math.round(((current+1)/questions.length)*100)}%`} color={accentColor} />
+        </div>
+        <ProgressBar value={((current+1)/questions.length)*100} color={accentColor} className="mb-8" />
+        <Card hover={false} className="!p-10 relative overflow-hidden">
+          <div className="absolute top-[-20%] right-[-10%] w-64 h-64 rounded-full pointer-events-none opacity-40"
+            style={{ background: `radial-gradient(circle, ${accentColor}55, transparent 70%)`, filter: "blur(40px)" }} />
+          <div className="relative">
+            <p className="text-2xl font-bold text-gray-900 mb-8 leading-relaxed text-balance">{q.q}</p>
+            <div className="grid gap-3.5">{q.options.map((opt,i) => {
+              const letter = ["A","B","C","D","E","F"][i] || String(i+1);
+              return (
+                <button key={i} onClick={()=>handleAnswer(i)}
+                  className="quiz-option w-full text-left rounded-2xl p-5 transition-all active:scale-[0.99] flex items-start gap-4"
+                  style={{
+                    background: "rgba(255,255,255,0.55)",
+                    border: "1px solid rgba(15,23,42,0.08)",
+                    backdropFilter: "blur(14px)",
+                    WebkitBackdropFilter: "blur(14px)",
+                    boxShadow: "0 4px 14px rgba(15,23,42,0.05), inset 0 1px 0 rgba(255,255,255,0.5)"
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.background = "rgba(255,255,255,0.8)"; e.currentTarget.style.borderColor = `${accentColor}45`; e.currentTarget.style.boxShadow = `0 10px 28px ${accentColor}22, 0 4px 12px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.6)`; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.background = "rgba(255,255,255,0.55)"; e.currentTarget.style.borderColor = "rgba(15,23,42,0.08)"; e.currentTarget.style.boxShadow = "0 4px 14px rgba(15,23,42,0.05), inset 0 1px 0 rgba(255,255,255,0.5)"; }}>
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold"
+                    style={{
+                      background: `linear-gradient(135deg, ${accentColor}28, ${accentColor}10)`,
+                      border: `1px solid ${accentColor}35`,
+                      color: accentColor,
+                      boxShadow: `inset 0 1px 0 rgba(255,255,255,0.4)`
+                    }}>
+                    {letter}
+                  </div>
+                  <p className="text-base text-gray-900 font-medium leading-relaxed flex-1 pt-1">{opt}</p>
+                </button>
+              );
+            })}</div>
+          </div>
+        </Card>
       </div>
     );
   };
@@ -1626,19 +2695,28 @@ const TrainingPage = ({ profile, addXp }) => {
   // Overview
   if (section === "overview") return (
     <div className="animate-fadeIn">
-      <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Utbildning</h2>
-      <p className="text-gray-500 text-sm mb-6">Allt du behöver för att bli en bättre säljare</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">Utbildning</h2>
+      <p className="text-gray-500 text-sm mb-8">Allt du behöver för att bli en bättre säljare</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {modules.map(m => (
-          <Card key={m.id} onClick={() => setSection(m.id)} className="group">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: `${m.color}12` }}>
-                <m.icon size={22} style={{ color: m.color }} />
+          <Card key={m.id} onClick={() => setSection(m.id)} className="group !p-7 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-48 h-48 rounded-full pointer-events-none opacity-50 group-hover:opacity-80 transition-opacity"
+              style={{ background: `radial-gradient(circle, ${m.color}30, transparent 70%)`, filter: "blur(30px)", transform: "translate(35%, -40%)" }} />
+            <div className="relative flex flex-col gap-5 min-h-[180px]">
+              <div className="w-16 h-16 rounded-[20px] flex items-center justify-center"
+                style={{
+                  background: `linear-gradient(135deg, ${m.color}35, ${m.color}15)`,
+                  boxShadow: `inset 0 0 0 1px ${m.color}35, 0 10px 24px ${m.color}30, inset 0 1px 0 rgba(255,255,255,0.4)`
+                }}>
+                <m.icon size={28} style={{ color: m.color }} />
               </div>
               <div className="flex-1">
-                <h3 className="text-sm font-bold text-gray-900 group-hover:text-emerald-700 transition-colors">{m.name}</h3>
-                <p className="text-xs text-gray-400 mt-0.5">{m.desc}</p>
+                <h3 className="text-lg font-bold text-gray-900 mb-1 group-hover:translate-x-0.5 transition-transform">{m.name}</h3>
+                <p className="text-sm text-gray-500 leading-relaxed mb-3">{m.desc}</p>
                 <Badge text={m.count} color={m.color} />
+              </div>
+              <div className="absolute bottom-0 right-0 text-gray-300 group-hover:text-gray-500 transition-colors">
+                <ChevronRight size={20} />
               </div>
             </div>
           </Card>
@@ -1683,18 +2761,40 @@ const CheckinPage = ({ profile, addXp }) => {
       </div>
       <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Check-in sparad!</h2>
       <p className="text-gray-500 mb-2">+{XP_ACTIONS.checkin} XP</p>
-      <button onClick={() => { setSubmitted(false); setAnswers({}); setMode("history"); }} className="mt-4 px-6 py-2.5 bg-emerald-50 text-emerald-700 rounded-xl font-medium hover:bg-emerald-100 transition-all">Se historik</button>
+      <button onClick={() => { setSubmitted(false); setAnswers({}); setMode("history"); }}
+        className="mt-4 px-6 py-2.5 rounded-2xl font-medium transition-all text-emerald-700"
+        style={{
+          background: "linear-gradient(135deg, rgba(16,185,129,0.18), rgba(16,185,129,0.08))",
+          border: "1px solid rgba(16,185,129,0.25)",
+          backdropFilter: "blur(10px)"
+        }}>Se historik</button>
     </div>
   );
 
   return (
     <div className="animate-fadeIn">
-      <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Vecko-check-in</h2>
+      <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">Vecko-check-in</h2>
       <p className="text-gray-500 text-sm mb-6">Reflektera över din vecka och tracka din utveckling</p>
 
       <div className="flex gap-2 mb-6">
-        <button onClick={() => setMode("form")} className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${mode === "form" ? "bg-emerald-600 text-white" : "bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-100"}`}>Ny check-in</button>
-        <button onClick={() => setMode("history")} className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${mode === "history" ? "bg-emerald-600 text-white" : "bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-100"}`}>Historik ({history.length})</button>
+        <button onClick={() => setMode("form")}
+          className="px-5 py-2.5 rounded-full text-sm font-bold transition-all"
+          style={mode === "form" ? {
+            background: "linear-gradient(135deg, #10b981, #059669)", color: "white",
+            boxShadow: "0 6px 18px rgba(16,185,129,0.4), inset 0 1px 0 rgba(255,255,255,0.25)"
+          } : {
+            background: "rgba(255,255,255,0.5)", color: "rgb(100,116,139)",
+            border: "1px solid rgba(15,23,42,0.08)", backdropFilter: "blur(10px)"
+          }}>Ny check-in</button>
+        <button onClick={() => setMode("history")}
+          className="px-5 py-2.5 rounded-full text-sm font-bold transition-all"
+          style={mode === "history" ? {
+            background: "linear-gradient(135deg, #10b981, #059669)", color: "white",
+            boxShadow: "0 6px 18px rgba(16,185,129,0.4), inset 0 1px 0 rgba(255,255,255,0.25)"
+          } : {
+            background: "rgba(255,255,255,0.5)", color: "rgb(100,116,139)",
+            border: "1px solid rgba(15,23,42,0.08)", backdropFilter: "blur(10px)"
+          }}>Historik ({history.length})</button>
       </div>
 
       {mode === "form" ? (
@@ -1704,16 +2804,30 @@ const CheckinPage = ({ profile, addXp }) => {
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-bold text-gray-900 mb-3">Energi denna vecka (1-10)</label>
-                <div className="flex gap-2">{[1,2,3,4,5,6,7,8,9,10].map(n => (
+                <div className="flex gap-2 flex-wrap">{[1,2,3,4,5,6,7,8,9,10].map(n => (
                   <button key={n} onClick={() => setAnswers({...answers, energy: n})}
-                    className={`w-9 h-9 rounded-lg text-sm font-bold transition-all ${answers.energy === n ? "bg-emerald-600 text-white shadow-sm" : "bg-gray-50 text-gray-400 hover:bg-emerald-50 hover:text-emerald-600"}`}>{n}</button>
+                    className="w-10 h-10 rounded-xl text-sm font-bold transition-all"
+                    style={answers.energy === n ? {
+                      background: "linear-gradient(135deg, #10b981, #059669)", color: "white",
+                      boxShadow: "0 6px 16px rgba(16,185,129,0.4), inset 0 1px 0 rgba(255,255,255,0.25)"
+                    } : {
+                      background: "rgba(255,255,255,0.45)", color: "rgb(148,163,184)",
+                      border: "1px solid rgba(15,23,42,0.06)", backdropFilter: "blur(8px)"
+                    }}>{n}</button>
                 ))}</div>
               </div>
               <div>
                 <label className="block text-sm font-bold text-gray-900 mb-3">Självförtroende (1-10)</label>
-                <div className="flex gap-2">{[1,2,3,4,5,6,7,8,9,10].map(n => (
+                <div className="flex gap-2 flex-wrap">{[1,2,3,4,5,6,7,8,9,10].map(n => (
                   <button key={n} onClick={() => setAnswers({...answers, confidence: n})}
-                    className={`w-9 h-9 rounded-lg text-sm font-bold transition-all ${answers.confidence === n ? "bg-blue-600 text-white shadow-sm" : "bg-gray-50 text-gray-400 hover:bg-blue-50 hover:text-blue-600"}`}>{n}</button>
+                    className="w-10 h-10 rounded-xl text-sm font-bold transition-all"
+                    style={answers.confidence === n ? {
+                      background: "linear-gradient(135deg, #3b82f6, #2563eb)", color: "white",
+                      boxShadow: "0 6px 16px rgba(59,130,246,0.4), inset 0 1px 0 rgba(255,255,255,0.25)"
+                    } : {
+                      background: "rgba(255,255,255,0.45)", color: "rgb(148,163,184)",
+                      border: "1px solid rgba(15,23,42,0.06)", backdropFilter: "blur(8px)"
+                    }}>{n}</button>
                 ))}</div>
               </div>
             </div>
@@ -1724,12 +2838,12 @@ const CheckinPage = ({ profile, addXp }) => {
             <Card key={i} hover={false} className="!p-4">
               <label className="block text-sm font-semibold text-gray-900 mb-2">{q}</label>
               <input type="text" value={answers[`q${i}`] || ""} onChange={e => setAnswers({...answers, [`q${i}`]: e.target.value})}
-                className="w-full px-3 py-2.5 bg-gray-50 border border-gray-100 rounded-lg focus:border-emerald-500 focus:ring-2 focus:ring-emerald-50 focus:outline-none text-sm" placeholder="Ditt svar..." />
+                className="glass-input w-full px-4 py-3 rounded-2xl focus:outline-none text-sm text-gray-900 placeholder-gray-400" placeholder="Ditt svar..." />
             </Card>
           ))}
 
           <button onClick={handleSubmit} disabled={!answers.energy || !answers.confidence}
-            className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl font-bold hover:from-emerald-600 hover:to-green-700 disabled:from-gray-300 disabled:to-gray-300 transition-all shadow-lg shadow-emerald-500/20">
+            className="w-full py-3.5 text-white rounded-2xl font-bold transition-all disabled:opacity-50 salj-btn-primary">
             Spara check-in (+{XP_ACTIONS.checkin} XP)
           </button>
         </div>
@@ -1761,63 +2875,738 @@ const CheckinPage = ({ profile, addXp }) => {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// ADMIN PAGE — Simple overview
+// LEADS PAGE — Personal CRM with 6-stage kanban
 // ═══════════════════════════════════════════════════════════════
-const AdminPage = () => {
-  const [salespeople, setSalespeople] = useState([]);
-  const [loading, setLoading] = useState(true);
+const LeadDetailModal = ({ lead, onClose, onUpdate, salespeople, currentName }) => {
+  const [personality, setPersonality] = useState(lead?.personality_type || "");
+  const [salesNotes, setSalesNotes] = useState(lead?.sales_notes || "");
+  const [stage, setStage] = useState(lead?.pipeline_stage || "Inkommen");
+  const [showReassign, setShowReassign] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    supabase.from("salespeople").select("*").then(({ data }) => {
-      setSalespeople(data || []);
+    setPersonality(lead?.personality_type || "");
+    setSalesNotes(lead?.sales_notes || "");
+    setStage(lead?.pipeline_stage || "Inkommen");
+  }, [lead?.id]);
+
+  if (!lead) return null;
+
+  const interests = [
+    lead.interest_solar_panels && "Solpaneler",
+    lead.interest_solar_panels_expansion && "Solpaneler-utbyggnad",
+    lead.interest_battery && "Batteri",
+    lead.interest_battery_expansion && "Batteri-utbyggnad",
+    lead.interest_ev_charger && "Laddbox",
+    lead.interest_unsure && "Osäker"
+  ].filter(Boolean);
+
+  const save = async (extras = {}) => {
+    setSaving(true);
+    const patch = {
+      personality_type: personality || null,
+      sales_notes: salesNotes || null,
+      pipeline_stage: stage,
+      updated_at: new Date().toISOString(),
+      ...extras
+    };
+    await leadsSupabase.from("leads").update(patch).eq("id", lead.id);
+    onUpdate({ ...lead, ...patch });
+    setSaving(false);
+  };
+
+  const reassign = async (toName) => {
+    await leadsSupabase.from("leads").update({ assigned_to: toName, updated_at: new Date().toISOString() }).eq("id", lead.id);
+    onUpdate({ ...lead, assigned_to: toName });
+    setShowReassign(false);
+    onClose();
+  };
+
+  const markWon = async () => { await save({ status: "Won", signed: "true", signed_date: new Date().toISOString().slice(0,10) }); onClose(); };
+  const markLost = async () => { await save({ status: "Lost", lost: "true", lost_date: new Date().toISOString().slice(0,10) }); onClose(); };
+
+  const discColor = DISC_COLORS[personality] || "#94a3b8";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(4, 6, 15, 0.55)", backdropFilter: "blur(8px)" }} onClick={onClose}>
+      <div className="glass-strong rounded-[36px] w-full max-w-4xl max-h-[92vh] overflow-y-auto relative" style={{ padding: "4rem 4.5rem" }} onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 mb-9">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-2xl font-extrabold text-gray-900 tracking-tight truncate">{lead.contact_name || `${lead.contact_first_name || ""} ${lead.contact_last_name || ""}`.trim() || "Okänt namn"}</h3>
+            <p className="text-sm text-gray-500 mt-1">{lead.city || "—"} · {lead.leadsource || "—"}</p>
+          </div>
+          <button onClick={onClose} className="p-2.5 rounded-xl glass-subtle hover:bg-white/70 shrink-0"><X size={18} /></button>
+        </div>
+
+        {/* Contact quick */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-9">
+          <a href={`tel:${lead.contact_phone}`} className="glass-subtle rounded-2xl px-4 py-3 flex items-center gap-3 hover:bg-white/70 transition-all">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.22), rgba(16,185,129,0.08))", border: "1px solid rgba(16,185,129,0.3)" }}>
+              <Phone size={16} className="text-emerald-600" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-gray-500 tracking-wider">TELEFON</p>
+              <p className="text-sm font-semibold text-gray-900 truncate">{lead.contact_phone || "—"}</p>
+            </div>
+          </a>
+          <a href={`mailto:${lead.contact_email}`} className="glass-subtle rounded-2xl px-4 py-3 flex items-center gap-3 hover:bg-white/70 transition-all">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, rgba(59,130,246,0.22), rgba(59,130,246,0.08))", border: "1px solid rgba(59,130,246,0.3)" }}>
+              <Send size={16} className="text-blue-600" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-gray-500 tracking-wider">E-POST</p>
+              <p className="text-sm font-semibold text-gray-900 truncate">{lead.contact_email || "—"}</p>
+            </div>
+          </a>
+        </div>
+
+        {/* Pipeline stage picker */}
+        <div className="mb-9">
+          <p className="text-[11px] font-bold text-gray-500 tracking-wider mb-2">PIPELINE-STEG</p>
+          <div className="grid grid-cols-3 gap-2">
+            {PIPELINE_STAGES.map(s => {
+              const active = stage === s.id;
+              return (
+                <button key={s.id} onClick={() => setStage(s.id)}
+                  className="rounded-2xl px-3 py-2.5 text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                  style={active ? {
+                    background: `linear-gradient(135deg, ${s.color}28, ${s.color}10)`,
+                    border: `1px solid ${s.color}50`,
+                    color: s.color,
+                    boxShadow: `0 4px 14px ${s.color}25`
+                  } : {
+                    background: "rgba(255,255,255,0.45)",
+                    border: "1px solid rgba(15,23,42,0.07)",
+                    color: "rgb(100,116,139)",
+                    backdropFilter: "blur(8px)"
+                  }}>
+                  <s.icon size={13} />
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Personality type picker */}
+        <div className="mb-9">
+          <p className="text-[11px] font-bold text-gray-500 tracking-wider mb-2">PERSONLIGHETSTYP</p>
+          <div className="grid grid-cols-4 gap-2">
+            {["R","Y","Gr","B"].map(k => {
+              const active = personality === k;
+              const color = DISC_COLORS[k];
+              return (
+                <button key={k} onClick={() => setPersonality(active ? "" : k)}
+                  className="rounded-2xl py-3 text-sm font-bold transition-all"
+                  style={active ? {
+                    background: `linear-gradient(135deg, ${color}28, ${color}10)`,
+                    border: `1px solid ${color}55`,
+                    color,
+                    boxShadow: `0 4px 14px ${color}30`
+                  } : {
+                    background: "rgba(255,255,255,0.45)",
+                    border: "1px solid rgba(15,23,42,0.07)",
+                    color: "rgb(100,116,139)",
+                    backdropFilter: "blur(8px)"
+                  }}>{DISC_SHORT[k]}</button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Sales notes */}
+        <div className="mb-9">
+          <p className="text-[11px] font-bold text-gray-500 tracking-wider mb-2">DINA ANTECKNINGAR</p>
+          <textarea value={salesNotes} onChange={e => setSalesNotes(e.target.value)}
+            placeholder="Vad kom ni överens om? Invändningar? Nästa steg?"
+            className="glass-input w-full px-4 py-3 rounded-2xl focus:outline-none text-sm text-gray-900 placeholder-gray-400 resize-y"
+            rows={3} />
+        </div>
+
+        {/* Customer info from form */}
+        {(lead.message || interests.length > 0 || lead.annual_electricity_consumption) && (
+          <div className="mb-9 rounded-2xl px-6 py-5" style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.14), rgba(139,92,246,0.05))", border: "1px solid rgba(139,92,246,0.25)" }}>
+            <p className="text-[11px] font-bold tracking-wider mb-2 text-purple-700">KUNDINFO FRÅN FORMULÄR</p>
+            {interests.length > 0 && <p className="text-sm text-gray-800 mb-1.5"><span className="text-gray-500">Intressen: </span>{interests.join(", ")}</p>}
+            {lead.annual_electricity_consumption && <p className="text-sm text-gray-800 mb-1.5"><span className="text-gray-500">Elförbrukning: </span>{lead.annual_electricity_consumption}</p>}
+            {lead.message && <p className="text-sm text-gray-800 mt-1 italic">"{lead.message}"</p>}
+          </div>
+        )}
+
+        {/* Reassign */}
+        <div className="mb-8">
+          <button onClick={() => setShowReassign(!showReassign)}
+            className="glass-subtle rounded-2xl px-4 py-3 w-full text-left flex items-center justify-between hover:bg-white/70 transition-all">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(148,163,184,0.18)", border: "1px solid rgba(148,163,184,0.3)" }}>
+                <User size={16} className="text-slate-600" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-gray-500 tracking-wider">SÄLJARE</p>
+                <p className="text-sm font-semibold text-gray-900">{lead.assigned_to || "Otilldelad"}</p>
+              </div>
+            </div>
+            <ChevronDown size={16} className={`text-gray-400 transition-transform ${showReassign ? "rotate-180" : ""}`} />
+          </button>
+          {showReassign && (
+            <div className="mt-2 glass-subtle rounded-2xl p-2 max-h-48 overflow-y-auto">
+              {salespeople.filter(s => s.name !== lead.assigned_to).map(s => (
+                <button key={s.id || s.name} onClick={() => reassign(s.name)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left hover:bg-white/70">
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs"
+                    style={{ background: `linear-gradient(135deg, ${DISC_COLORS[s.disc_type] || T.primary}, ${DISC_COLORS[s.disc_type] || T.primary}cc)`, boxShadow: `0 3px 10px ${DISC_COLORS[s.disc_type] || T.primary}40` }}>
+                    {s.name?.[0] || "?"}
+                  </div>
+                  <span className="text-gray-900">Flytta till {s.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex gap-3 flex-wrap">
+          <button onClick={() => save().then(onClose)} disabled={saving}
+            className="flex-1 min-w-[140px] py-3 rounded-2xl font-bold text-white transition-all salj-btn-primary disabled:opacity-50">
+            {saving ? "Sparar..." : "Spara ändringar"}
+          </button>
+          <button onClick={markWon} disabled={saving}
+            className="flex-1 min-w-[120px] py-3 rounded-2xl font-bold text-white transition-all disabled:opacity-50"
+            style={{ background: "linear-gradient(135deg, #10b981, #047857)", boxShadow: "0 10px 28px rgba(16,185,129,0.4), inset 0 1px 0 rgba(255,255,255,0.25)" }}>
+            Vunnen
+          </button>
+          <button onClick={markLost} disabled={saving}
+            className="flex-1 min-w-[120px] py-3 rounded-2xl font-bold text-white transition-all disabled:opacity-50"
+            style={{ background: "linear-gradient(135deg, #ef4444, #b91c1c)", boxShadow: "0 10px 28px rgba(239,68,68,0.4), inset 0 1px 0 rgba(255,255,255,0.25)" }}>
+            Förlorad
+          </button>
+        </div>
+
+        {lead.status === "Won" && <div className="mt-4 text-center text-emerald-600 font-bold text-sm">✓ Affär vunnen</div>}
+        {lead.status === "Lost" && <div className="mt-4 text-center text-red-500 font-bold text-sm">✗ Affär förlorad</div>}
+      </div>
+    </div>
+  );
+};
+
+const LeadsPage = ({ profile }) => {
+  const [leads, setLeads] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [showArchive, setShowArchive] = useState(false);
+  const [salespeople, setSalespeople] = useState([]);
+
+  const refresh = () => {
+    setLoading(true);
+    leadsSupabase.from("leads").select("*").eq("assigned_to", profile.name).order("inserted_at", { ascending: false }).then(({ data }) => {
+      setLeads(data || []);
+      setLoading(false);
+    });
+  };
+
+  useEffect(() => { refresh(); }, [profile?.name]);
+  useEffect(() => {
+    supabase.from("salespeople").select("*").then(({ data }) => setSalespeople(data || []));
+  }, []);
+
+  const open = leads.filter(l => l.status !== "Won" && l.status !== "Lost");
+  const archive = leads.filter(l => l.status === "Won" || l.status === "Lost");
+  const byStage = {};
+  PIPELINE_STAGES.forEach(s => { byStage[s.id] = []; });
+  open.forEach(l => {
+    const stage = PIPELINE_STAGES.some(s => s.id === l.pipeline_stage) ? l.pipeline_stage : "Inkommen";
+    byStage[stage].push(l);
+  });
+
+  const moveLead = async (leadId, toStage) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (!lead || lead.pipeline_stage === toStage) return;
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, pipeline_stage: toStage } : l));
+    await leadsSupabase.from("leads").update({ pipeline_stage: toStage, updated_at: new Date().toISOString() }).eq("id", leadId);
+  };
+
+  const timeAgo = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    const diff = (Date.now() - d.getTime()) / 1000;
+    if (diff < 60) return "nu";
+    if (diff < 3600) return `${Math.floor(diff/60)} min`;
+    if (diff < 86400) return `${Math.floor(diff/3600)}h`;
+    if (diff < 7*86400) return `${Math.floor(diff/86400)}d`;
+    return d.toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
+  };
+
+  const leadTitle = (l) => l.contact_name || `${l.contact_first_name || ""} ${l.contact_last_name || ""}`.trim() || "Okänt namn";
+
+  const leadSourceShort = (src) => {
+    if (!src) return "—";
+    const m = src.match(/META EG \(([a-z]+)\)/i);
+    if (m) return m[1].toLowerCase() === "fb" ? "Facebook" : m[1].toLowerCase() === "ig" ? "Instagram" : "Meta";
+    if (src.startsWith("Adversus")) return "Adversus";
+    return src;
+  };
+
+  const LeadCard = ({ l }) => {
+    const color = DISC_COLORS[l.personality_type] || "#94a3b8";
+    const interests = [
+      l.interest_solar_panels && "Sol",
+      l.interest_battery && "Batteri",
+      l.interest_ev_charger && "Laddbox"
+    ].filter(Boolean);
+    return (
+      <div draggable onDragStart={e => { e.dataTransfer.setData("lead-id", l.id); e.dataTransfer.effectAllowed = "move"; }}
+        onClick={() => setSelected(l)}
+        className="glass rounded-2xl px-3.5 py-3 w-full text-left transition-all cursor-pointer hover:-translate-y-0.5 relative overflow-hidden"
+        style={{ boxShadow: "0 2px 8px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.4)" }}>
+        <div className="absolute left-0 top-0 bottom-0 w-1" style={{ background: color, boxShadow: `0 0 10px ${color}90`, opacity: l.personality_type ? 1 : 0.35 }} />
+        <div className="pl-2">
+          <div className="flex items-start gap-2.5 mb-2">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs shrink-0 mt-0.5"
+              style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)`, boxShadow: `0 3px 10px ${color}50` }}>
+              {leadTitle(l)[0]}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-gray-900 truncate leading-tight">{leadTitle(l)}</p>
+              <p className="text-[11px] text-gray-500 truncate mt-0.5">{l.city || "—"}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-semibold text-gray-500 tracking-wider">{leadSourceShort(l.leadsource)}</span>
+            {interests.length > 0 && <span className="text-[10px] text-gray-400">· {interests.join(", ")}</span>}
+          </div>
+          <div className="flex items-center justify-between mt-2">
+            <div className="flex items-center gap-2 text-[10px] text-gray-400">
+              <Clock size={10} /> {timeAgo(l.inserted_at)}
+            </div>
+            {l.personality_type && (
+              <span className="text-[10px] font-bold tracking-wider" style={{ color }}>{DISC_SHORT[l.personality_type]}</span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if (!profile?.name) return <div className="text-center text-gray-400 py-12">Ingen profil laddad.</div>;
+
+  const stageCounts = PIPELINE_STAGES.map(s => ({ ...s, count: byStage[s.id]?.length || 0 }));
+
+  return (
+    <div className="animate-fadeIn">
+      <div className="flex items-start justify-between mb-6 flex-wrap gap-3">
+        <div>
+          <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mina leads</h2>
+          <p className="text-gray-500 text-sm mt-1">{open.length} öppna · {archive.length} arkiverade</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={refresh} className="glass-subtle rounded-2xl px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-white/70 flex items-center gap-2">
+            <RotateCcw size={14} /> Uppdatera
+          </button>
+          <button onClick={() => setShowArchive(!showArchive)}
+            className="glass-subtle rounded-2xl px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-white/70">
+            {showArchive ? "Dölj arkiv" : `Visa arkiv (${archive.length})`}
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-center text-gray-400 py-12">Laddar leads...</div>
+      ) : leads.length === 0 ? (
+        <Card hover={false} className="text-center py-16">
+          <Users size={48} className="mx-auto text-gray-300 mb-4" />
+          <p className="text-gray-500">Inga leads tilldelade dig ännu.</p>
+        </Card>
+      ) : (
+        <>
+          {/* Stage summary row */}
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">
+            {stageCounts.map(s => (
+              <div key={s.id} className="glass rounded-2xl p-3.5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-20 h-20 rounded-full pointer-events-none opacity-50"
+                  style={{ background: `radial-gradient(circle, ${s.color}30, transparent 70%)`, filter: "blur(16px)", transform: "translate(30%, -35%)" }} />
+                <div className="relative">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <div className="w-2 h-2 rounded-full" style={{ background: s.color, boxShadow: `0 0 8px ${s.color}` }} />
+                    <p className="text-[10px] font-bold text-gray-500 tracking-wider">{s.label}</p>
+                  </div>
+                  <p className="text-2xl font-extrabold" style={{ color: s.color }}>{s.count}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Kanban — Pipedrive-style horizontal scroll */}
+          <div className="overflow-x-auto pb-4 mb-8 -mx-2 px-2" style={{ WebkitOverflowScrolling: "touch" }}>
+            <div className="flex gap-3" style={{ minWidth: "max-content" }}>
+              {PIPELINE_STAGES.map(s => {
+                const items = byStage[s.id] || [];
+                return (
+                  <div key={s.id} className="w-[280px] shrink-0 flex flex-col"
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => {
+                      e.preventDefault();
+                      const id = e.dataTransfer.getData("lead-id");
+                      if (id) moveLead(id, s.id);
+                    }}>
+                    <div className="rounded-2xl mb-3 px-4 py-3 relative overflow-hidden"
+                      style={{
+                        background: `linear-gradient(135deg, ${s.color}20, ${s.color}08)`,
+                        border: `1px solid ${s.color}35`,
+                        backdropFilter: "blur(12px)",
+                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.3)`
+                      }}>
+                      <div className="flex items-center gap-2">
+                        <s.icon size={14} style={{ color: s.color }} />
+                        <p className="text-sm font-bold tracking-tight" style={{ color: s.color }}>{s.label}</p>
+                        <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full"
+                          style={{ background: `${s.color}25`, color: s.color }}>{items.length}</span>
+                      </div>
+                    </div>
+                    <div className="space-y-2.5 min-h-[120px] rounded-2xl p-1"
+                      style={{ background: items.length === 0 ? "rgba(15,23,42,0.02)" : "transparent", border: items.length === 0 ? "1.5px dashed rgba(148,163,184,0.25)" : "none" }}>
+                      {items.map(l => <LeadCard key={l.id} l={l} />)}
+                      {items.length === 0 && (
+                        <div className="text-center text-xs text-gray-400 py-8">Dra hit en lead</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {showArchive && archive.length > 0 && (
+            <div>
+              <h3 className="text-lg font-bold text-gray-900 mb-3 tracking-tight">Arkiv</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {archive.map(l => (
+                  <button key={l.id} onClick={() => setSelected(l)}
+                    className="glass rounded-2xl p-4 text-left transition-all lift relative overflow-hidden">
+                    <div className="absolute top-0 left-0 bottom-0 w-1" style={{ background: l.status === "Won" ? "#10b981" : "#ef4444", boxShadow: `0 0 12px ${l.status === "Won" ? "#10b981" : "#ef4444"}80` }} />
+                    <div className="pl-2">
+                      <p className="text-sm font-bold text-gray-900 truncate">{l.contact_name || "Okänt"}</p>
+                      <p className="text-xs mt-0.5" style={{ color: l.status === "Won" ? "#059669" : "#dc2626" }}>{l.status === "Won" ? "✓ Vunnen" : "✗ Förlorad"}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {selected && <LeadDetailModal lead={selected} onClose={() => setSelected(null)}
+        onUpdate={upd => { setLeads(leads.map(x => x.id === upd.id ? upd : x)); }}
+        salespeople={salespeople} currentName={profile.name} />}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════
+// ADMIN PAGE — Overview with lead stats
+// ═══════════════════════════════════════════════════════════════
+const AdminPage = () => {
+  const [tab, setTab] = useState("leads");
+  const [salespeople, setSalespeople] = useState([]);
+  const [leads, setLeads] = useState([]);
+  const [adSpend, setAdSpend] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [range, setRange] = useState("day"); // day | week | month
+  const [spendModal, setSpendModal] = useState(null);
+
+  useEffect(() => {
+    Promise.all([
+      new Promise(res => supabase.from("salespeople").select("*").then(({ data }) => res(data || []))),
+      new Promise(res => leadsSupabase.from("leads").select("*").then(({ data }) => res(data || []))),
+      new Promise(res => leadsSupabase.from("ad_spend").select("*").then(({ data }) => res(data || []))),
+    ]).then(([sp, ld, sp2]) => {
+      setSalespeople(sp);
+      setLeads(ld);
+      setAdSpend(sp2);
       setLoading(false);
     });
   }, []);
 
   if (loading) return <div className="text-center py-12 text-gray-400">Laddar...</div>;
 
+  // ── Compute range stats ──
+  const today = new Date(); today.setHours(0,0,0,0);
+  const rangeStart = new Date(today);
+  if (range === "week") rangeStart.setDate(today.getDate() - 6);
+  else if (range === "month") rangeStart.setDate(today.getDate() - 29);
+
+  const leadDate = (l) => l.inserted_at ? new Date(l.inserted_at) : null;
+  const inRange = (l) => { const d = leadDate(l); return d && d >= rangeStart; };
+  const rangeLeads = leads.filter(inRange);
+
+  // Per-day breakdown
+  const days = [];
+  const dayCount = range === "day" ? 1 : range === "week" ? 7 : 30;
+  for (let i = dayCount - 1; i >= 0; i--) {
+    const d = new Date(today); d.setDate(today.getDate() - i);
+    const key = d.toISOString().slice(0,10);
+    const dayLeads = leads.filter(l => (l.inserted_at || "").slice(0,10) === key);
+    const metaCount = dayLeads.filter(l => /META/i.test(l.leadsource || "")).length;
+    const adversusCount = dayLeads.filter(l => /Adversus/i.test(l.leadsource || "")).length;
+    const hemsolCount = dayLeads.filter(l => /Hemsol/i.test(l.leadsource || "")).length;
+    const metaSpendRow = adSpend.find(a => a.date === key && (a.source === "META" || a.source === "Facebook" || a.source === "Meta"));
+    const metaSpend = metaSpendRow?.amount_sek || 0;
+    const adversusSpend = adversusCount * ADVERSUS_COST_PER_LEAD;
+    days.push({ date: key, dateShort: new Date(key).toLocaleDateString("sv-SE", { day: "numeric", month: "short" }), total: dayLeads.length, meta: metaCount, adversus: adversusCount, hemsol: hemsolCount, metaSpend, adversusSpend, totalSpend: metaSpend + adversusSpend, metaCpl: metaCount ? metaSpend / metaCount : 0 });
+  }
+
+  const totalLeads = rangeLeads.length;
+  const totalMetaLeads = rangeLeads.filter(l => /META/i.test(l.leadsource || "")).length;
+  const totalAdversusLeads = rangeLeads.filter(l => /Adversus/i.test(l.leadsource || "")).length;
+  const totalMetaSpend = days.reduce((s, d) => s + d.metaSpend, 0);
+  const totalAdversusSpend = days.reduce((s, d) => s + d.adversusSpend, 0);
+  const totalSpend = totalMetaSpend + totalAdversusSpend;
+  const avgCplMeta = totalMetaLeads ? totalMetaSpend / totalMetaLeads : 0;
+  const avgCplTotal = (totalMetaLeads + totalAdversusLeads) ? totalSpend / (totalMetaLeads + totalAdversusLeads) : 0;
+
+  // Per source breakdown
+  const sourceAgg = {};
+  rangeLeads.forEach(l => {
+    const src = l.leadsource || "Okänt";
+    sourceAgg[src] = (sourceAgg[src] || 0) + 1;
+  });
+
+  // Per salesperson
+  const salespersonAgg = {};
+  rangeLeads.forEach(l => {
+    const n = l.assigned_to || "Otilldelad";
+    salespersonAgg[n] = salespersonAgg[n] || { total: 0, won: 0, lost: 0, open: 0 };
+    salespersonAgg[n].total++;
+    if (l.status === "Won") salespersonAgg[n].won++;
+    else if (l.status === "Lost") salespersonAgg[n].lost++;
+    else salespersonAgg[n].open++;
+  });
+
+  // Save/edit ad spend
+  const saveSpend = async (date, source, amount) => {
+    await leadsSupabase.from("ad_spend").upsert({ date, source, amount_sek: amount, updated_at: new Date().toISOString() }, { onConflict: "date,source" });
+    const { data } = await new Promise(res => leadsSupabase.from("ad_spend").select("*").then(({data}) => res({data})));
+    setAdSpend(data || []);
+    setSpendModal(null);
+  };
+
+  const tabs = [
+    { id: "leads", label: "Lead-statistik", icon: TrendingUp },
+    { id: "salespeople", label: "Säljare", icon: Users },
+  ];
+
+  const StatCard = ({ label, value, sub, color }) => (
+    <Card hover={false} className="!p-5 relative overflow-hidden">
+      <div className="absolute top-0 right-0 w-32 h-32 rounded-full pointer-events-none opacity-60"
+        style={{ background: `radial-gradient(circle, ${color}30, transparent 70%)`, filter: "blur(24px)", transform: "translate(30%, -35%)" }} />
+      <div className="relative">
+        <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider mb-1.5">{label}</p>
+        <p className="text-3xl font-extrabold text-gray-900 tracking-tight">{value}</p>
+        {sub && <p className="text-xs text-gray-500 mt-1.5">{sub}</p>}
+      </div>
+    </Card>
+  );
+
   return (
     <div className="animate-fadeIn">
-      <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Admin</h2>
-      <p className="text-gray-500 text-sm mb-6">Översikt alla säljare</p>
+      <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">Admin</h2>
+      <p className="text-gray-500 text-sm mb-6">Översikt leads och säljare</p>
 
-      <Card hover={false}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100">
-                <th className="text-left py-3 px-4 text-xs font-bold text-gray-400 uppercase">Namn</th>
-                <th className="text-left py-3 px-4 text-xs font-bold text-gray-400 uppercase">DISC</th>
-                <th className="text-left py-3 px-4 text-xs font-bold text-gray-400 uppercase">Sekundär</th>
-                <th className="text-left py-3 px-4 text-xs font-bold text-gray-400 uppercase">XP</th>
-                <th className="text-left py-3 px-4 text-xs font-bold text-gray-400 uppercase">Nivå</th>
-              </tr>
-            </thead>
-            <tbody>
-              {salespeople.map((p, i) => {
-                const savedXp = parseInt(localStorage.getItem(`xp_${p.id}`) || "0");
-                const lvl = getLevel(savedXp);
-                return (
-                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs" style={{ background: DISC_COLORS[p.disc_type] || "#6B7280" }}>
-                          {p.name?.[0] || "?"}
-                        </div>
-                        <span className="font-medium text-gray-900">{p.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4"><Badge text={DISC_SHORT[p.disc_type] || "?"} color={DISC_COLORS[p.disc_type]} /></td>
-                    <td className="py-3 px-4 text-gray-500">{DISC_SHORT[p.disc_secondary] || "—"}</td>
-                    <td className="py-3 px-4 font-medium text-gray-900">{savedXp}</td>
-                    <td className="py-3 px-4"><Badge text={lvl.name} color={lvl.color} /></td>
+      <div className="flex gap-2 mb-6">
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className="px-5 py-2.5 rounded-full text-sm font-bold transition-all flex items-center gap-2"
+            style={tab === t.id ? {
+              background: "linear-gradient(135deg, #10b981, #059669)", color: "white",
+              boxShadow: "0 6px 18px rgba(16,185,129,0.4), inset 0 1px 0 rgba(255,255,255,0.25)"
+            } : {
+              background: "rgba(255,255,255,0.5)", color: "rgb(100,116,139)",
+              border: "1px solid rgba(15,23,42,0.08)", backdropFilter: "blur(10px)"
+            }}>
+            <t.icon size={14} /> {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "leads" && (
+        <>
+          {/* Range filter */}
+          <div className="flex gap-2 mb-5">
+            {[{ id: "day", label: "Idag" }, { id: "week", label: "7 dagar" }, { id: "month", label: "30 dagar" }].map(r => (
+              <button key={r.id} onClick={() => setRange(r.id)}
+                className="px-4 py-2 rounded-full text-xs font-bold transition-all"
+                style={range === r.id ? {
+                  background: "linear-gradient(135deg, rgba(16,185,129,0.22), rgba(16,185,129,0.08))",
+                  border: "1px solid rgba(16,185,129,0.4)",
+                  color: "rgb(4,120,87)",
+                  backdropFilter: "blur(10px)"
+                } : {
+                  background: "rgba(255,255,255,0.45)",
+                  border: "1px solid rgba(15,23,42,0.06)",
+                  color: "rgb(100,116,139)",
+                  backdropFilter: "blur(10px)"
+                }}>{r.label}</button>
+            ))}
+          </div>
+
+          {/* Summary stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <StatCard label="Leads" value={totalLeads} sub={`${totalMetaLeads} Meta · ${totalAdversusLeads} Adv`} color="#3b82f6" />
+            <StatCard label="Total kostnad" value={`${Math.round(totalSpend).toLocaleString("sv-SE")} kr`} sub={`${Math.round(totalMetaSpend).toLocaleString("sv-SE")} Meta · ${Math.round(totalAdversusSpend).toLocaleString("sv-SE")} Adv`} color="#ef4444" />
+            <StatCard label="Snitt CPL" value={`${Math.round(avgCplTotal)} kr`} sub={`Meta: ${Math.round(avgCplMeta)} kr · Adv: ${ADVERSUS_COST_PER_LEAD} kr`} color="#f59e0b" />
+            <StatCard label="Konvertering" value={`${totalLeads ? Math.round((rangeLeads.filter(l=>l.status==="Won").length / totalLeads) * 100) : 0}%`} sub={`${rangeLeads.filter(l=>l.status==="Won").length} vunna av ${totalLeads}`} color="#10b981" />
+          </div>
+
+          {/* Per-day table */}
+          <Card hover={false} className="mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-900 tracking-tight">Dag-för-dag</h3>
+              <p className="text-xs text-gray-400">Klicka på en Meta-spend-cell för att uppdatera kostnaden</p>
+            </div>
+            <div className="overflow-x-auto -mx-2 px-2">
+              <table className="w-full text-sm min-w-[700px]">
+                <thead>
+                  <tr className="text-left">
+                    <th className="py-2 px-3 text-[11px] font-bold text-gray-500 tracking-wider">DATUM</th>
+                    <th className="py-2 px-3 text-[11px] font-bold text-gray-500 tracking-wider">TOTALT</th>
+                    <th className="py-2 px-3 text-[11px] font-bold text-blue-600 tracking-wider">META</th>
+                    <th className="py-2 px-3 text-[11px] font-bold text-amber-600 tracking-wider">ADVERSUS</th>
+                    <th className="py-2 px-3 text-[11px] font-bold text-purple-600 tracking-wider">HEMSOL</th>
+                    <th className="py-2 px-3 text-[11px] font-bold text-gray-500 tracking-wider">META SPEND</th>
+                    <th className="py-2 px-3 text-[11px] font-bold text-gray-500 tracking-wider">CPL META</th>
+                    <th className="py-2 px-3 text-[11px] font-bold text-gray-500 tracking-wider">TOTAL KOSTNAD</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {days.map(d => (
+                    <tr key={d.date} className="transition-colors" style={{ borderTop: "1px solid rgba(15,23,42,0.05)" }}>
+                      <td className="py-2.5 px-3 font-semibold text-gray-900">{d.dateShort}</td>
+                      <td className="py-2.5 px-3 font-bold text-gray-900">{d.total}</td>
+                      <td className="py-2.5 px-3 text-blue-600 font-semibold">{d.meta}</td>
+                      <td className="py-2.5 px-3 text-amber-600 font-semibold">{d.adversus}</td>
+                      <td className="py-2.5 px-3 text-purple-600 font-semibold">{d.hemsol}</td>
+                      <td className="py-2.5 px-3">
+                        <button onClick={() => setSpendModal({ date: d.date, source: "META", amount: d.metaSpend })}
+                          className="glass-subtle rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-white/80 transition-all text-gray-700">
+                          {d.metaSpend ? `${Math.round(d.metaSpend).toLocaleString("sv-SE")} kr` : <span className="text-gray-400">lägg till</span>}
+                        </button>
+                      </td>
+                      <td className="py-2.5 px-3 text-gray-700 font-semibold">{d.meta && d.metaSpend ? `${Math.round(d.metaCpl)} kr` : "—"}</td>
+                      <td className="py-2.5 px-3 font-bold text-gray-900">{Math.round(d.totalSpend).toLocaleString("sv-SE")} kr</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Per source */}
+            <Card hover={false}>
+              <h3 className="text-lg font-bold text-gray-900 mb-4 tracking-tight">Per leadkälla</h3>
+              <div className="space-y-2.5">
+                {Object.entries(sourceAgg).sort(([,a],[,b]) => b - a).map(([src, count]) => {
+                  const pct = totalLeads ? (count / totalLeads) * 100 : 0;
+                  const color = /Meta|META/i.test(src) ? "#3b82f6" : /Adversus/i.test(src) ? "#f59e0b" : /Hemsol/i.test(src) ? "#8b5cf6" : "#94a3b8";
+                  return (
+                    <div key={src}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-semibold text-gray-900">{src}</span>
+                        <span className="text-sm font-bold" style={{ color }}>{count}</span>
+                      </div>
+                      <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(15,23,42,0.06)" }}>
+                        <div style={{ width: `${pct}%`, height: "100%", background: `linear-gradient(90deg, ${color}, ${color}cc)`, boxShadow: `0 0 8px ${color}60` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+
+            {/* Per salesperson */}
+            <Card hover={false}>
+              <h3 className="text-lg font-bold text-gray-900 mb-4 tracking-tight">Per säljare</h3>
+              <div className="divide-y divide-gray-200/30">
+                {Object.entries(salespersonAgg).sort(([,a],[,b]) => b.total - a.total).map(([name, st]) => (
+                  <div key={name} className="flex items-center justify-between py-2.5">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs shrink-0"
+                        style={{ background: `linear-gradient(135deg, ${DISC_COLORS[salespeople.find(s => s.name === name)?.disc_type] || "#94a3b8"}, ${DISC_COLORS[salespeople.find(s => s.name === name)?.disc_type] || "#94a3b8"}cc)` }}>
+                        {name[0]}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-gray-900 truncate">{name}</p>
+                        <p className="text-[11px] text-gray-500">{st.won} vunna · {st.open} öppna · {st.lost} förlorade</p>
+                      </div>
+                    </div>
+                    <p className="text-lg font-extrabold text-gray-900">{st.total}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        </>
+      )}
+
+      {tab === "salespeople" && (
+        <Card hover={false}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(15,23,42,0.08)" }}>
+                  <th className="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Namn</th>
+                  <th className="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider">DISC</th>
+                  <th className="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Sekundär</th>
+                  <th className="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider">XP</th>
+                  <th className="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Nivå</th>
+                </tr>
+              </thead>
+              <tbody>
+                {salespeople.map((p, i) => {
+                  const savedXp = parseInt(localStorage.getItem(`xp_${p.id}`) || "0");
+                  const lvl = getLevel(savedXp);
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid rgba(15,23,42,0.04)" }}>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs" style={{ background: `linear-gradient(135deg, ${DISC_COLORS[p.disc_type] || "#6B7280"}, ${DISC_COLORS[p.disc_type] || "#6B7280"}cc)` }}>
+                            {p.name?.[0] || "?"}
+                          </div>
+                          <span className="font-semibold text-gray-900">{p.name}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4"><Badge text={DISC_SHORT[p.disc_type] || "?"} color={DISC_COLORS[p.disc_type]} /></td>
+                      <td className="py-3 px-4 text-gray-500">{DISC_SHORT[p.disc_secondary] || "—"}</td>
+                      <td className="py-3 px-4 font-medium text-gray-900">{savedXp}</td>
+                      <td className="py-3 px-4"><Badge text={lvl.name} color={lvl.color} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* Ad spend edit modal */}
+      {spendModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,6,15,0.55)", backdropFilter: "blur(8px)" }} onClick={() => setSpendModal(null)}>
+          <div className="glass-strong rounded-[24px] w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-bold text-gray-900 mb-1 tracking-tight">Meta-spend</h3>
+            <p className="text-sm text-gray-500 mb-5">{new Date(spendModal.date).toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long" })}</p>
+            <label className="block text-[11px] font-bold text-gray-500 tracking-wider mb-2">BELOPP (KR)</label>
+            <input type="number" autoFocus value={spendModal.amount} onChange={e => setSpendModal({ ...spendModal, amount: parseFloat(e.target.value) || 0 })}
+              className="glass-input w-full px-4 py-3 rounded-2xl focus:outline-none text-gray-900 text-xl font-bold mb-5" />
+            <div className="flex gap-3">
+              <button onClick={() => setSpendModal(null)}
+                className="flex-1 py-3 rounded-2xl font-semibold text-gray-700 glass-subtle hover:bg-white/70">Avbryt</button>
+              <button onClick={() => saveSpend(spendModal.date, "META", spendModal.amount)}
+                className="flex-1 py-3 text-white rounded-2xl font-bold salj-btn-primary">Spara</button>
+            </div>
+          </div>
         </div>
-      </Card>
+      )}
     </div>
   );
 };
@@ -1870,6 +3659,7 @@ export default function App() {
   // Main app
   const pages = {
     dashboard: <Dashboard profile={profile} setPage={setPage} xp={gamification.xp} addXp={gamification.addXp} streak={gamification.streak} />,
+    leads: <LeadsPage profile={profile} />,
     coach: <AiCoachPage profile={profile} addXp={gamification.addXp} dark={dark} />,
     expert: <AiBatteryExpertPage profile={profile} addXp={gamification.addXp} dark={dark} />,
     training: <TrainingPage profile={profile} addXp={gamification.addXp} />,
@@ -1878,7 +3668,7 @@ export default function App() {
   };
 
   return (
-    <div className={`min-h-screen flex transition-colors duration-300 ${dark ? "bg-gray-950" : "bg-gradient-to-br from-gray-50 via-white to-emerald-50/30"}`}>
+    <div className="min-h-screen flex">
       <Sidebar page={page} setPage={setPage} profile={profile} xp={gamification.xp} streak={gamification.streak} onLogout={handleLogout} dark={dark} setDark={setDark} />
       <div className="w-64 shrink-0" />
       <main className="flex-1 min-w-0 overflow-x-hidden">
@@ -1888,15 +3678,6 @@ export default function App() {
           </div>
         </div>
       </main>
-
-      <style>{`
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
-        @keyframes typingDot { 0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
-        .typing-dot { animation: typingDot 1.4s infinite; }
-        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
-        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
-      `}</style>
     </div>
   );
 }
