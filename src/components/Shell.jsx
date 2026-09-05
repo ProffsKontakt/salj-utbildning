@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { applyPendingReload } from '../pwa.js'
 import { Library, CalendarDays, Settings } from 'lucide-react'
 import { cn } from './ui/cn.js'
 import { Wordmark } from './Logo.jsx'
@@ -12,6 +14,10 @@ const NAV = [
 /** App frame: sidebar on desktop, bottom tab bar on phones/tablets in portrait. */
 export function Shell() {
   const location = useLocation()
+  // Apply a deferred app update once the user is back in the library.
+  useEffect(() => {
+    applyPendingReload()
+  }, [])
   return (
     <div className="stage-bg flex min-h-dvh text-ivory-100">
       <aside className="pt-safe pl-safe sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-ivory-50/8 bg-ink-950/40 px-4 pb-6 md:flex">
