@@ -10,8 +10,7 @@ import { usePdfDocument } from '../hooks/usePdfDocument.js'
 import { useSetting } from '../hooks/useSetting.js'
 import { useWakeLock } from '../hooks/useWakeLock.js'
 import { useMediaQuery } from '../hooks/useMediaQuery.js'
-import { TopBar, IconButton, Button, ConfirmDialog, EmptyState, Spinner, useToast, cn } from '../components/ui/index.js'
-import { ViewerMenu } from '../components/viewer/ViewerMenu.jsx'
+import { TopBar, IconButton, Button, ConfirmDialog, EmptyState, Menu, Spinner, useToast, cn } from '../components/ui/index.js'
 import { ScoreStage } from '../components/viewer/ScoreStage.jsx'
 import { AnnotationToolbar } from '../components/viewer/AnnotationToolbar.jsx'
 import { PageNav } from '../components/viewer/PageNav.jsx'
@@ -193,7 +192,7 @@ function ScoreViewerInner({ scoreId }) {
             <IconButton label={showNotes ? 'Dölj anteckningar' : 'Visa anteckningar'} active={showNotes} onClick={() => setShowNotes((v) => !v)} data-testid="notes-toggle">
               <NotebookPen />
             </IconButton>
-            <ViewerMenu
+            <Menu
               trigger={(props) => (
                 <IconButton label="Meny" {...props} data-testid="viewer-menu">
                   <MoreVertical />

@@ -5,8 +5,10 @@ import { cn } from './cn.js'
 /**
  * Minimal popover menu anchored to a trigger. Usage:
  * <Menu trigger={(props) => <IconButton {...props} />} items={[{label, icon, onSelect, danger, testId}]} testId="score-menu-popover" />
+ * Items: { label, icon?, onSelect?, danger?, disabled?, hint?, key?, testId? } or { separator: true }.
+ * Keyboard: the first item is focused on open, arrows move, Escape closes and refocuses the trigger.
  */
-export function Menu({ trigger, items, align = 'end', testId, className }) {
+export function Menu({ trigger, items, align = 'end', testId, className, label = 'Meny' }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState(null)
   const btnRef = useRef(null)
@@ -29,7 +31,12 @@ export function Menu({ trigger, items, align = 'end', testId, className }) {
       if (menuRef.current?.contains(e.target) || btnRef.current?.contains(e.target)) return
       setOpen(false)
     }
-    const onKey = (e) => e.key === 'Escape' && setOpen(false)
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setOpen(false)
+      btnRef.current?.focus?.()
+    }
     document.addEventListener('pointerdown', onDoc, true)
     document.addEventListener('keydown', onKey)
     window.addEventListener('resize', place)
@@ -42,6 +49,26 @@ export function Menu({ trigger, items, align = 'end', testId, className }) {
     }
   }, [open, align])
 
+  // Focus the first enabled item once the popover is placed (keyboard users).
+  useEffect(() => {
+    if (!open || !pos) return
+    const t = setTimeout(() => menuRef.current?.querySelector('[role="menuitem"]:not([disabled])')?.focus?.(), 20)
+    return () => clearTimeout(t)
+  }, [open, pos])
+
+  const onMenuKey = (e) => {
+    const els = [...(menuRef.current?.querySelectorAll('[role="menuitem"]:not([disabled])') || [])]
+    if (!els.length) return
+    const i = els.indexOf(document.activeElement)
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      els[(i + 1) % els.length].focus()
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      els[(i - 1 + els.length) % els.length].focus()
+    }
+  }
+
   return (
     <>
       {trigger({ ref: btnRef, onClick: () => setOpen((o) => !o), 'aria-haspopup': 'menu', 'aria-expanded': open })}
@@ -50,7 +77,9 @@ export function Menu({ trigger, items, align = 'end', testId, className }) {
             <div
               ref={menuRef}
               role="menu"
+              aria-label={label}
               data-testid={testId}
+              onKeyDown={onMenuKey}
               className={cn('fixed z-[150] overflow-hidden rounded-2xl bg-ink-800 p-1.5 shadow-stage animate-fade-in', className)}
               style={{ left: pos.left, top: pos.top ?? undefined, bottom: pos.bottom ?? undefined, width: pos.width }}
             >
@@ -58,7 +87,7 @@ export function Menu({ trigger, items, align = 'end', testId, className }) {
                 .filter(Boolean)
                 .map((item, i) =>
                   item.separator ? (
-                    <div key={`sep-${i}`} className="my-1 h-px bg-ivory-50/8" />
+                    <div key={`sep-${i}`} className="my-1 h-px bg-ivory-50/8" role="separator" />
                   ) : (
                     <button
                       key={item.key || item.label}
@@ -67,7 +96,7 @@ export function Menu({ trigger, items, align = 'end', testId, className }) {
                       data-testid={item.testId}
                       disabled={item.disabled}
                       className={cn(
-                        'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[15px] transition-colors',
+                        'flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[15px] transition-colors focus-visible:outline-none focus-visible:bg-ink-700',
                         item.danger ? 'text-[#f08a86] hover:bg-velvet-600/40' : 'text-ivory-100 hover:bg-ink-700',
                         item.disabled && 'opacity-50',
                       )}

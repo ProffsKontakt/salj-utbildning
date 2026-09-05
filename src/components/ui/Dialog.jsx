@@ -8,6 +8,7 @@ import { Button } from './Button.jsx'
 /**
  * Modal dialog. Centered card on ≥sm screens, bottom sheet on phones.
  * Closes on Escape and backdrop tap. Renders nothing when `open` is false.
+ * `testId` lands on the role=dialog panel.
  */
 export function Dialog({ open, onClose, title, description, children, footer, size = 'md', className, closeLabel = 'Stäng', testId }) {
   const panelRef = useRef(null)

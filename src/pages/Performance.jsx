@@ -173,7 +173,7 @@ function PerformanceInner({ projectId }) {
         aria-hidden={!chromeVisible}
         onPointerDown={showChrome}
       >
-        <div className="flex h-14 items-center gap-1 px-2 max-md:bg-gradient-to-b max-md:from-ink-950/90 max-md:to-ink-950/0">
+        <div className="flex h-14 items-center gap-1 px-2 bg-gradient-to-b from-ink-950/95 via-ink-950/70 to-ink-950/0">
           <IconButton label="Avsluta konsertläge" onClick={exit} data-testid="performance-exit">
             <X />
           </IconButton>

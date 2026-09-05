@@ -1,4 +1,4 @@
-// CONTRACT (implemented by the settings module):
+// CONTRACT (settings module):
 // <InstallBanner /> renders a dismissible hint to install the app to the home
 // screen when running in a browser tab on a mobile device; renders null otherwise.
 import { useState } from 'react'

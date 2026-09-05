@@ -31,6 +31,10 @@ db.version(1).stores({
   projectScores: 'id, projectId, scoreId, [projectId+position]',
   settings: 'key',
 })
+// v2: compound index for "is this score in this project" lookups.
+db.version(2).stores({
+  projectScores: 'id, projectId, scoreId, [projectId+position], [projectId+scoreId]',
+})
 
 export const now = () => Date.now()
 

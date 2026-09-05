@@ -139,13 +139,14 @@ export function AnnotationToolbar({ tool, onToolChange, settings, onSettingChang
         </div>
       ) : null}
 
-      <div className="pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto no-scrollbar rounded-2xl bg-ink-800/95 p-1 shadow-stage backdrop-blur">
+      {/* On phones the row wraps (the pen-only switch drops to a second line) instead of scrolling off-screen. */}
+      <div className="pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto no-scrollbar rounded-2xl bg-ink-800/95 p-1 shadow-stage backdrop-blur max-sm:flex-wrap max-sm:justify-center">
         {onExit ? (
           <>
             <IconButton label="Läsläge" onClick={onExit} data-testid="tool-read">
               <BookOpen />
             </IconButton>
-            <span className="mx-0.5 h-6 w-px bg-ivory-50/10" aria-hidden="true" />
+            <span className="mx-0.5 h-6 w-px bg-ivory-50/10 max-sm:hidden" aria-hidden="true" />
           </>
         ) : null}
         <div className="flex items-center gap-0.5" role="radiogroup" aria-label="Verktyg">
@@ -155,7 +156,7 @@ export function AnnotationToolbar({ tool, onToolChange, settings, onSettingChang
             </IconButton>
           ))}
         </div>
-        <span className="mx-0.5 h-6 w-px bg-ivory-50/10" aria-hidden="true" />
+        <span className="mx-0.5 h-6 w-px bg-ivory-50/10 max-sm:hidden" aria-hidden="true" />
         <IconButton label="Ångra" onClick={onUndo} disabled={!canUndo} data-testid="undo">
           <Undo2 />
         </IconButton>
@@ -165,7 +166,7 @@ export function AnnotationToolbar({ tool, onToolChange, settings, onSettingChang
         <IconButton label="Rensa sidan" onClick={() => setConfirmClear(true)} disabled={!canClear} data-testid="clear-page">
           <Trash2 />
         </IconButton>
-        <span className="mx-0.5 h-6 w-px bg-ivory-50/10" aria-hidden="true" />
+        <span className="mx-0.5 h-6 w-px bg-ivory-50/10 max-sm:hidden" aria-hidden="true" />
         <button
           type="button"
           role="switch"
