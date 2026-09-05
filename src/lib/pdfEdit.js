@@ -62,22 +62,48 @@ export async function imagesToPdf(images) {
 export async function appendPdf(baseBytes, extraBytes) {
   const base = await PDFDocument.load(baseBytes, LOAD_OPTS)
   const extra = await PDFDocument.load(extraBytes, LOAD_OPTS)
+  if (base.isEncrypted || extra.isEncrypted) {
+    const err = new Error('PDF-filen är krypterad och kan inte redigeras direkt.')
+    err.code = 'ENCRYPTED'
+    throw err
+  }
   const indices = extra.getPageIndices()
   const copied = await base.copyPages(extra, indices)
   for (const p of copied) base.addPage(p)
   return { bytes: toArrayBuffer(await base.save({ useObjectStreams: true })), added: indices.length, total: base.getPageCount() }
 }
 
-// WinAnsi-safe text for the standard Helvetica font.
-const WINANSI_EXTRA = new Set(['€', '‘', '’', '“', '”', '–', '—', '…', '•', '™', 'Š', 'š', 'Ÿ', 'Ž', 'ž', 'Œ', 'œ'])
-export function toWinAnsi(text) {
+// Musical symbols that WinAnsi lacks → readable ASCII stand-ins.
+const SYMBOL_MAP = { '♯': '#', '♭': 'b', '♮': 'n', '𝄞': 'G', '𝄢': 'F', '→': '->', '←': '<-', '✓': 'v', '★': '*', '♪': '*', '♫': '*' }
+
+/** Make text encodable by a pdf-lib standard (WinAnsi) font. */
+export function toWinAnsi(text, font) {
   let out = ''
   for (const ch of String(text || '')) {
-    const c = ch.codePointAt(0)
-    if (ch === '\n' || (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) || WINANSI_EXTRA.has(ch)) out += ch
-    else if (ch === '\t') out += '  '
-    else if (ch === '\r') continue
-    else out += '?'
+    if (ch === '\r') continue
+    if (ch === '\t') {
+      out += '  '
+      continue
+    }
+    if (ch === '\n') {
+      out += ch
+      continue
+    }
+    if (SYMBOL_MAP[ch]) {
+      out += SYMBOL_MAP[ch]
+      continue
+    }
+    if (font) {
+      try {
+        font.encodeText(ch)
+        out += ch
+      } catch {
+        out += '?'
+      }
+    } else {
+      const c = ch.codePointAt(0)
+      out += (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) ? ch : '?'
+    }
   }
   return out
 }
@@ -99,6 +125,11 @@ export function toWinAnsi(text) {
 export async function buildExportPdf({ srcBytes, pageOrder, rotations = {}, annotations = new Map(), includeAnnotations = true, title = '', author = '' }) {
   if (!pageOrder?.length) throw new Error('Stycket har inga sidor att exportera.')
   const src = await PDFDocument.load(srcBytes, LOAD_OPTS)
+  if (src.isEncrypted) {
+    const err = new Error('PDF-filen är krypterad och kan inte redigeras direkt.')
+    err.code = 'ENCRYPTED'
+    throw err
+  }
   const out = await PDFDocument.create()
   out.setProducer('Notställ')
   out.setCreator('Notställ')
@@ -152,7 +183,7 @@ function drawAnnotations(doc, page, ann, effectiveRotation, font) {
   if (ops.length) page.pushOperators(...ops)
 
   for (const t of ann.texts || []) {
-    const text = toWinAnsi(t.text)
+    const text = toWinAnsi(t.text, font)
     if (!text.trim()) continue
     const [r, g, b] = hexToRgb01(t.color)
     const size = Math.max(4, t.size || 12)

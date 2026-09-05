@@ -2,7 +2,7 @@
 // Notställ – local-first storage layer (Dexie / IndexedDB)
 //
 // Tables
-//   scores        { id, title, composer, voice, key, notes, pageCount,
+//   scores        { id, title, composer, voice, key, notes, pageCount, fileSize,
 //                   pageOrder:number[], rotations:{[srcPage]:0|90|180|270},
 //                   thumb:ArrayBuffer|null, thumbMime, createdAt, updatedAt, lastOpenedAt }
 //   files         { id (=scoreId), data:ArrayBuffer (PDF bytes), mime, size, name }
@@ -71,6 +71,7 @@ export async function createScore({
     key: (key || '').trim(),
     notes: notes || '',
     pageCount,
+    fileSize: pdfBytes.byteLength,
     pageOrder: Array.from({ length: pageCount }, (_, i) => i),
     rotations: {},
     thumb,
@@ -120,7 +121,7 @@ export async function replaceScoreFile(id, { pdfBytes, pageCount, pageOrder, rot
       size: pdfBytes.byteLength,
       name: file?.name || '',
     })
-    const patch = { pageCount, updatedAt: now() }
+    const patch = { pageCount, fileSize: pdfBytes.byteLength, updatedAt: now() }
     if (pageOrder) patch.pageOrder = pageOrder
     if (rotations) patch.rotations = rotations
     if (thumb !== undefined) patch.thumb = thumb
@@ -145,11 +146,11 @@ export async function deleteScores(ids) {
   for (const id of ids) await deleteScore(id)
 }
 
-/** Total bytes stored in files (for storage stats). */
+/** Total PDF bytes stored (from score metadata, so no file data is loaded). */
 export async function totalFileBytes() {
   let total = 0
-  await db.files.each((f) => {
-    total += f.size || f.data?.byteLength || 0
+  await db.scores.each((s) => {
+    total += s.fileSize || 0
   })
   return total
 }
@@ -183,7 +184,7 @@ export async function putAnnotation(scoreId, pageIndex, { strokes = [], texts = 
     await db.annotations.delete([scoreId, pageIndex])
     return null
   }
-  const rec = { scoreId, pageIndex, strokes, texts, note, updatedAt: now() }
+  const rec = { scoreId, pageIndex, v: 1, strokes, texts, note, updatedAt: now() }
   await db.annotations.put(rec)
   return rec
 }

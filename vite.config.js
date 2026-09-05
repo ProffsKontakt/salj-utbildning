@@ -32,8 +32,10 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff,woff2}'],
-        globIgnores: ['pdfjs/**'],
+        // Precache the app, the pdf.js worker, its WASM decoders and standard fonts so a
+        // freshly installed app can open scanned PDFs offline. CJK CMaps are fetched on demand.
+        globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff,woff2,wasm,pfb,ttf}'],
+        globIgnores: ['pdfjs/cmaps/**', 'pdfjs/wasm/*.js'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/pdfjs\//, /\.[a-z0-9]+$/i],

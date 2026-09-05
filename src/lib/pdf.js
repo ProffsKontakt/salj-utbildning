@@ -12,10 +12,17 @@ export const PDFJS_LOAD_OPTIONS = {
   cMapPacked: true,
   standardFontDataUrl: `${ASSET_BASE}standard_fonts/`,
   wasmUrl: `${ASSET_BASE}wasm/`,
-  isEvalSupported: false,
 }
 
 export { pdfjs }
+
+// One shared worker thread for every document. Passing `worker` to getDocument
+// means loadingTask.destroy() releases the document but keeps the worker alive.
+let sharedWorker = null
+export function getSharedWorker() {
+  if (!sharedWorker || sharedWorker.destroyed) sharedWorker = new pdfjs.PDFWorker({ name: 'notstall-pdf' })
+  return sharedWorker
+}
 
 /**
  * Load a PDF document from bytes. The bytes are copied because pdf.js
@@ -25,7 +32,7 @@ export { pdfjs }
  */
 export async function loadPdfDocument(bytes, opts = {}) {
   const data = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes.slice(0))
-  const task = pdfjs.getDocument({ data, ...PDFJS_LOAD_OPTIONS, ...opts })
+  const task = pdfjs.getDocument({ data, worker: getSharedWorker(), ...PDFJS_LOAD_OPTIONS, ...opts })
   return task.promise
 }
 
@@ -46,6 +53,16 @@ export function isPasswordError(err) {
 
 export function isRenderCancelled(err) {
   return err?.name === 'RenderingCancelledException'
+}
+
+/** True when the PDF carries an /Encrypt dictionary (pdf-lib cannot edit such files). */
+export async function isEncryptedPdf(doc) {
+  try {
+    const perms = await doc.getPermissions()
+    return perms !== null
+  } catch {
+    return false
+  }
 }
 
 /** Human-readable Swedish message for a pdf.js load failure. */
@@ -124,9 +141,9 @@ export function renderPage(page, canvas, { scale = 1, rotation = 0, dpr = window
   if (canvas.height !== h) canvas.height = h
   canvas.style.width = `${viewport.width}px`
   canvas.style.height = `${viewport.height}px`
-  const ctx = canvas.getContext('2d', { alpha: false })
+  // pdf.js v6 takes the canvas itself and creates its own 2d context.
   const task = page.render({
-    canvasContext: ctx,
+    canvas,
     viewport,
     transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : null,
     background: '#ffffff',
