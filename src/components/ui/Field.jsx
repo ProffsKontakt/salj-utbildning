@@ -41,9 +41,9 @@ export function Select({ label, className, children, id: idProp, ...rest }) {
   )
 }
 
-export function Toggle({ label, description, checked, onChange, disabled }) {
+export function Toggle({ label, description, checked, onChange, disabled, className, ...rest }) {
   return (
-    <label className={cn('flex items-center justify-between gap-4 py-3', disabled && 'opacity-60')}>
+    <label className={cn('flex items-center justify-between gap-4 py-3', disabled && 'opacity-60', className)} {...rest}>
       <span className="min-w-0">
         <span className="block text-[15px] text-ivory-50">{label}</span>
         {description ? <span className="mt-0.5 block text-[13px] leading-snug text-ivory-400">{description}</span> : null}

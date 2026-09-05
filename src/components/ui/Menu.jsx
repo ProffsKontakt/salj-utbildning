@@ -4,9 +4,9 @@ import { cn } from './cn.js'
 
 /**
  * Minimal popover menu anchored to a trigger. Usage:
- * <Menu trigger={(props) => <IconButton {...props} />} items={[{label, icon, onSelect, danger}]} />
+ * <Menu trigger={(props) => <IconButton {...props} />} items={[{label, icon, onSelect, danger, testId}]} testId="score-menu-popover" />
  */
-export function Menu({ trigger, items, align = 'end' }) {
+export function Menu({ trigger, items, align = 'end', testId, className }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState(null)
   const btnRef = useRef(null)
@@ -50,7 +50,8 @@ export function Menu({ trigger, items, align = 'end' }) {
             <div
               ref={menuRef}
               role="menu"
-              className="fixed z-[150] overflow-hidden rounded-2xl bg-ink-800 p-1.5 shadow-stage animate-fade-in"
+              data-testid={testId}
+              className={cn('fixed z-[150] overflow-hidden rounded-2xl bg-ink-800 p-1.5 shadow-stage animate-fade-in', className)}
               style={{ left: pos.left, top: pos.top ?? undefined, bottom: pos.bottom ?? undefined, width: pos.width }}
             >
               {items
@@ -63,6 +64,7 @@ export function Menu({ trigger, items, align = 'end' }) {
                       key={item.key || item.label}
                       type="button"
                       role="menuitem"
+                      data-testid={item.testId}
                       disabled={item.disabled}
                       className={cn(
                         'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[15px] transition-colors',
