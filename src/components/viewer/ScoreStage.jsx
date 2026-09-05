@@ -272,6 +272,7 @@ export function ScoreStage({
       onLast,
       onCenterTap,
       onDoubleTap: toggleFit,
+      onToggleFit: toggleFit,
       zoom: z,
       onZoomCommit: onZoomChange ? commitZoom : undefined,
       onPinchPreview: setPinch,

@@ -8,6 +8,7 @@ const SHORTCUTS = [
   { keys: ['Mellanslag'], what: 'Nästa sida (Skift + mellanslag: föregående)' },
   { keys: ['PgUp', 'PgDn'], what: 'Föregående / nästa sida' },
   { keys: ['Home', 'End'], what: 'Första / sista sidan' },
+  { keys: ['F'], what: 'Växla mellan hel sida och bredd' },
 ]
 
 /** App info and viewer keyboard shortcuts. */

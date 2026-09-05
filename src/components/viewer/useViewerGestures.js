@@ -245,6 +245,12 @@ export function useViewerGestures(ref, o) {
           e.preventDefault()
           opts.onLast?.()
           break
+        case 'f':
+        case 'F':
+          if (onControl) return
+          e.preventDefault()
+          opts.onToggleFit?.()
+          break
         default:
       }
     }

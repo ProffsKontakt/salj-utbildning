@@ -27,6 +27,15 @@ function scheduleDeferredReload() {
 }
 
 export function setupPwa() {
+  // Chromium fires `beforeinstallprompt` once, early. Stash it at boot so the
+  // lazily loaded install UI (settings page, library banner) can still use it.
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault()
+    window.__notstallInstallPrompt = e
+  })
+  window.addEventListener('appinstalled', () => {
+    window.__notstallInstallPrompt = null
+  })
   if (!('serviceWorker' in navigator)) return
   registerSW({
     immediate: true,

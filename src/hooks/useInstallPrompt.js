@@ -14,6 +14,8 @@ function emit() {
 }
 
 if (typeof window !== 'undefined') {
+  // The boot script (src/pwa.js) may already have captured the event.
+  if (window.__notstallInstallPrompt) deferredPrompt = window.__notstallInstallPrompt
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault()
     deferredPrompt = e
@@ -21,6 +23,7 @@ if (typeof window !== 'undefined') {
   })
   window.addEventListener('appinstalled', () => {
     deferredPrompt = null
+    window.__notstallInstallPrompt = null
     installed = true
     emit()
   })
@@ -49,6 +52,7 @@ export function useInstallPrompt() {
       const choice = await evt.userChoice
       // The event can only be used once, whatever the user chose.
       deferredPrompt = null
+      window.__notstallInstallPrompt = null
       emit()
       return choice?.outcome === 'accepted' ? 'accepted' : 'dismissed'
     } catch {
