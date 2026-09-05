@@ -3,3 +3,6 @@ dist
 .vercel
 .DS_Store
 *.local
+public/pdfjs
+test-results
+playwright-report
