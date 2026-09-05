@@ -112,3 +112,26 @@ npm run lint       # eslint
 npm run test:e2e   # Playwright (kräver build eller dev-server enligt playwright.config.js)
 npm run icons      # regenerera PWA-ikoner från SVG
 ```
+
+## Beslut (och varför)
+
+| Beslut | Motivering |
+| --- | --- |
+| pdf.js **legacy-build** | Den moderna builden använder `Map.prototype.getOrInsertComputed`, `URL.parse`, `Promise.try` m.m. (kräver Safari 26.2+). Legacy-builden polyfillar dem och stödjer iPadOS 18+. |
+| En delad `PDFWorker` | Varje `getDocument` utan `worker` startar en egen tråd. Med `worker` överlever tråden `loadingTask.destroy()`. |
+| PDF-bytes som `ArrayBuffer` i IndexedDB | Undviker historiska Blob-buggar i Safari; pdf.js behöver ändå bytes. Storlek sparas i `scores.fileSize` så statistik inte läser filerna. |
+| Anteckningar i PDF-användarrymd | `viewport.convertToPdfPoint` inkluderar CropBox-offset ⇒ samma koordinater som pdf-lib:s innehållsström. Rotation/zoom påverkar inte lagrade data. |
+| Export med råa operatorer | `drawSvgPath` speglar y-axeln och `drawLine` skapar en ExtGState per anrop. Vi bygger `q … Q`-block med en cachad ExtGState per alfa/blandning. |
+| Krypterade PDF:er rastreras vid import | pdf-lib kan inte dekryptera – `copyPages` skulle ge oläsliga sidor. pdf.js renderar dem, så vi gör om dem till bild-PDF (`isEncryptedPdf` via `getPermissions()`). |
+| Export/backup via Web Share på iOS | `<a download>` fungerar inte i installerade hemskärmsappar. `saveFile()` provar `navigator.share({ files })` → `showSaveFilePicker` → `<a download>`. |
+| Kamera = en bild per tryck | iOS ignorerar `multiple` tillsammans med `capture`. Skanningsvyn loopar i stället. |
+| Canvas ≤ 12 MP och ≤ 4096 px/sida | iOS ≤ 17 vägrar större canvas (ritar tomt). `clampDpr` sänker DPR i stället för att krascha. |
+| `virtual:pwa-register` + uppskjuten reload | Ny version laddas om direkt i biblioteket men aldrig mitt i en konsert. `vite:preloadError` ⇒ reload (gamla chunkar 404:ar efter deploy). |
+| dnd-kit `PointerSensor` med `distance: 6` på ett handtag med `touch-action: none` | Låter listan scrolla med fingret samtidigt som handtaget drar. Svenska skärmläsartexter i `dndA11y.js`. |
+| Hemskärmsapp ≠ Safari-flik | iOS ger dem separata IndexedDB. Appen uppmanar till installation innan import och erbjuder backup. |
+
+## Tester
+
+`e2e/` innehåller Playwright-tester som kör mot dev-servern (för att kunna läsa IndexedDB via
+appens moduler) och ett rökprov mot produktionsbygget (`vite preview`). Test-id:n
+(`data-testid`) är en del av UI-kontraktet – ta inte bort dem.
