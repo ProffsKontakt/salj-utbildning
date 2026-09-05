@@ -10,36 +10,51 @@ import { cn } from './ui/cn.js'
  * pointer coordinates relative to it are CSS pixels convertible with
  * `viewport.convertToPdfPoint(x, y)`.
  *
+ * Rendering is double-buffered: while a new scale/rotation renders into the
+ * hidden canvas, the previous image stays visible (stretched to the new size),
+ * so zooming and fit changes never flash to a blank page. The pulsing paper
+ * placeholder is only shown before the very first successful render of a page.
+ *
  * Props: doc (pdf.js document), pageIndex (0-based source index), scale,
  * rotation (0|90|180|270), onViewport(viewport), onRendered(), className,
  * quality: 'screen' (device pixel ratio) | 'thumb' (dpr 1).
  */
 export const PdfPage = memo(function PdfPage({ doc, pageIndex, scale = 1, rotation = 0, onViewport, onRendered, className, children, quality = 'screen', style }) {
-  const canvasRef = useRef(null)
+  const canvasARef = useRef(null)
+  const canvasBRef = useRef(null)
   const [page, setPage] = useState(null)
   const [size, setSize] = useState(null)
   const [error, setError] = useState(null)
+  // which buffer currently shows a completed render (0 = A, 1 = B, -1 = none yet)
+  const [active, setActive] = useState(-1)
   const [rendered, setRendered] = useState(false)
 
   // Load the page proxy.
   useEffect(() => {
-    let active = true
-    setPage(null)
-    setRendered(false)
-    setError(null)
+    let cancelled = false
     if (!doc) return
     doc
       .getPage(pageIndex + 1)
       .then((p) => {
-        if (active) setPage(p)
+        if (!cancelled) setPage(p)
       })
       .catch((e) => {
-        if (active) setError(e?.message || 'Sidan kunde inte läsas.')
+        if (!cancelled) setError(e?.message || 'Sidan kunde inte läsas.')
       })
     return () => {
-      active = false
+      cancelled = true
     }
   }, [doc, pageIndex])
+
+  // Reset buffers when the page identity changes (derived, not in an effect body).
+  const identityRef = useRef(null)
+  const identity = `${pageIndex}`
+  if (identityRef.current !== identity) {
+    identityRef.current = identity
+    if (active !== -1) setActive(-1)
+    if (rendered) setRendered(false)
+    if (page && page.pageNumber !== pageIndex + 1) setPage(null)
+  }
 
   // Size the box immediately (before render finishes) so layout is stable.
   useLayoutEffect(() => {
@@ -49,17 +64,19 @@ export const PdfPage = memo(function PdfPage({ doc, pageIndex, scale = 1, rotati
     onViewport?.(vp)
   }, [page, scale, rotation, onViewport])
 
-  // Render (cancellable).
+  // Render into the inactive buffer, then swap (cancellable).
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!page || !canvas) return
+    if (!page) return
+    const target = active === 0 ? canvasBRef.current : canvasARef.current
+    const targetIndex = active === 0 ? 1 : 0
+    if (!target) return
     let cancelled = false
-    setRendered(false)
     const dpr = quality === 'thumb' ? 1 : window.devicePixelRatio || 1
-    const { task } = renderPage(page, canvas, { scale, rotation, dpr })
+    const { task } = renderPage(page, target, { scale, rotation, dpr })
     task.promise
       .then(() => {
         if (cancelled) return
+        setActive(targetIndex)
         setRendered(true)
         onRendered?.()
       })
@@ -71,7 +88,17 @@ export const PdfPage = memo(function PdfPage({ doc, pageIndex, scale = 1, rotati
       cancelled = true
       task.cancel()
     }
+    // `active` is intentionally excluded: a completed swap must not trigger a re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, scale, rotation, quality, onRendered])
+
+  const showPlaceholder = active === -1 && !error
+  const canvasStyle = (index) => ({
+    display: active === index ? 'block' : 'none',
+    // stretch the previous image to the new box while the other buffer renders
+    width: size ? `${size.width}px` : undefined,
+    height: size ? `${size.height}px` : undefined,
+  })
 
   return (
     <div
@@ -80,8 +107,9 @@ export const PdfPage = memo(function PdfPage({ doc, pageIndex, scale = 1, rotati
       data-page-index={pageIndex}
       data-rendered={rendered ? 'true' : 'false'}
     >
-      <canvas ref={canvasRef} className="block" aria-label={`Sida ${pageIndex + 1}`} />
-      {!rendered && !error ? <div className="absolute inset-0 animate-pulse-soft bg-paper" aria-hidden="true" /> : null}
+      <canvas ref={canvasARef} className="absolute inset-0" style={canvasStyle(0)} aria-label={`Sida ${pageIndex + 1}`} />
+      <canvas ref={canvasBRef} className="absolute inset-0" style={canvasStyle(1)} aria-hidden="true" />
+      {showPlaceholder ? <div className="absolute inset-0 animate-pulse-soft bg-paper" aria-hidden="true" /> : null}
       {error ? <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-sm text-ink-700">{error}</div> : null}
       {children}
     </div>

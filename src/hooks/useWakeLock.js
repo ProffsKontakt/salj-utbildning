@@ -6,6 +6,7 @@ export function useWakeLock(active) {
     if (!active || !('wakeLock' in navigator)) return
     let sentinel = null
     let disposed = false
+    let retryOnGesture = false
     const request = async () => {
       try {
         sentinel = await navigator.wakeLock.request('screen')
@@ -13,7 +14,15 @@ export function useWakeLock(active) {
           sentinel = null
         })
       } catch {
+        // Some browsers require user activation: retry on the next tap.
         sentinel = null
+        retryOnGesture = true
+      }
+    }
+    const onGesture = () => {
+      if (retryOnGesture && !sentinel && !disposed) {
+        retryOnGesture = false
+        request()
       }
     }
     const onVisibility = () => {
@@ -21,9 +30,11 @@ export function useWakeLock(active) {
     }
     request()
     document.addEventListener('visibilitychange', onVisibility)
+    document.addEventListener('pointerdown', onGesture, { passive: true })
     return () => {
       disposed = true
       document.removeEventListener('visibilitychange', onVisibility)
+      document.removeEventListener('pointerdown', onGesture)
       sentinel?.release?.().catch(() => {})
       sentinel = null
     }

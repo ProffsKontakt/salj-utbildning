@@ -36,6 +36,7 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], baseURL: PROD },
     },
   ],
+  // E2E_DEV_ONLY=1 skips the production build/preview server (faster local iteration).
   webServer: [
     {
       command: 'npx vite --port 4174 --strictPort',
@@ -43,11 +44,15 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
-    {
-      command: 'npm run build && npx vite preview --port 4173 --strictPort',
-      url: PROD,
-      reuseExistingServer: !process.env.CI,
-      timeout: 300_000,
-    },
+    ...(process.env.E2E_DEV_ONLY
+      ? []
+      : [
+          {
+            command: 'npm run build && npx vite preview --port 4173 --strictPort',
+            url: PROD,
+            reuseExistingServer: !process.env.CI,
+            timeout: 300_000,
+          },
+        ]),
   ],
 })

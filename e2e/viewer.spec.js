@@ -61,7 +61,8 @@ test.describe('Visare & annotering', () => {
     await waitForRenderedPage(page)
     await expect.poll(() => paintedFraction(page.getByTestId('annotation-canvas'))).toBeGreaterThan(0.001)
 
-    // highlighter + undo
+    // highlighter + undo (the viewer reopens in read mode: the pen button enters draw mode)
+    await page.getByTestId('tool-pen').click()
     await page.getByTestId('tool-highlighter').click()
     await dragAcross(page, page.getByTestId('annotation-canvas'), 0.1, 0.5, 0.9, 0.5)
     await expect.poll(async () => (await readTable(page, 'annotations'))[0].strokes.length).toBe(2)
@@ -93,6 +94,7 @@ test.describe('Visare & annotering', () => {
   test('text tool adds a note that is saved', async ({ page }) => {
     await importPdfViaUi(page, await makePdf(1), 'Text.pdf')
     await waitForRenderedPage(page)
+    await page.getByTestId('tool-pen').click() // enter draw mode
     await page.getByTestId('tool-text').click()
     const canvas = page.getByTestId('annotation-canvas')
     const box = await canvas.boundingBox()

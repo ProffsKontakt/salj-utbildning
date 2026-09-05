@@ -2,8 +2,9 @@
 //
 // iOS (especially installed home-screen apps) cannot download via <a download>.
 // The reliable path there is the Web Share sheet with *only* `files` set, which
-// offers "Spara i Filer", AirDrop, Mail, forScore … On desktop we prefer the
-// File System Access picker, then fall back to an anchor download.
+// offers "Spara i Filer", AirDrop, Mail, forScore … Everywhere else a plain
+// anchor download is used (the File System Access picker is deliberately not
+// used: it is Chromium-only, needs its own activation and hangs headless runs).
 
 export function supportsFileShare(file) {
   try {
@@ -18,7 +19,7 @@ export function supportsFileShare(file) {
  * @param {Blob|ArrayBuffer} data
  * @param {string} name  file name including extension
  * @param {string} mime
- * @returns {Promise<'shared'|'saved'|'downloaded'|'cancelled'>}
+ * @returns {Promise<'shared'|'downloaded'|'cancelled'>}
  */
 export async function saveFile(data, name, mime = 'application/octet-stream') {
   const blob = data instanceof Blob ? data : new Blob([data], { type: mime })
@@ -31,23 +32,6 @@ export async function saveFile(data, name, mime = 'application/octet-stream') {
     } catch (err) {
       if (err?.name === 'AbortError') return 'cancelled'
       // fall through to other strategies
-    }
-  }
-
-  if (typeof window.showSaveFilePicker === 'function') {
-    try {
-      const ext = name.includes('.') ? `.${name.split('.').pop()}` : ''
-      const handle = await window.showSaveFilePicker({
-        suggestedName: name,
-        types: ext ? [{ description: mime, accept: { [mime]: [ext] } }] : undefined,
-      })
-      const writable = await handle.createWritable()
-      await writable.write(blob)
-      await writable.close()
-      return 'saved'
-    } catch (err) {
-      if (err?.name === 'AbortError') return 'cancelled'
-      // fall through
     }
   }
 
