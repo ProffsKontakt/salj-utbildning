@@ -9,7 +9,7 @@ import { Button } from './Button.jsx'
  * Modal dialog. Centered card on ≥sm screens, bottom sheet on phones.
  * Closes on Escape and backdrop tap. Renders nothing when `open` is false.
  */
-export function Dialog({ open, onClose, title, description, children, footer, size = 'md', className, closeLabel = 'Stäng' }) {
+export function Dialog({ open, onClose, title, description, children, footer, size = 'md', className, closeLabel = 'Stäng', testId }) {
   const panelRef = useRef(null)
   useEffect(() => {
     if (!open) return
@@ -43,6 +43,7 @@ export function Dialog({ open, onClose, title, description, children, footer, si
         ref={panelRef}
         role="dialog"
         aria-modal="true"
+        data-testid={testId}
         aria-label={typeof title === 'string' ? title : undefined}
         className={cn(
           'relative flex max-h-[92dvh] w-full flex-col bg-ink-850 text-ivory-100 shadow-stage',

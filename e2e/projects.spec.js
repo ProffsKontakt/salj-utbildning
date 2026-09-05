@@ -56,8 +56,8 @@ test.describe('Projekt & konsertläge', () => {
     await waitForRenderedPage(page, 'performance-stage')
     await page.getByTestId('performance-next').click()
     await waitForRenderedPage(page, 'performance-stage')
-    // at the end: next does nothing harmful
-    await page.getByTestId('performance-next').click()
+    // at the end: next is disabled, prev still works
+    await expect(page.getByTestId('performance-next')).toBeDisabled()
     await page.getByTestId('performance-prev').click()
     await waitForRenderedPage(page, 'performance-stage')
     await page.getByTestId('performance-exit').click()
