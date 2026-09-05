@@ -134,12 +134,22 @@ export async function dragAcross(page, locator, fx0, fy0, fx1, fy1, steps = 12) 
 
 export function collectErrors(page) {
   const errors = []
+  const isFontHost = (url = '') => /fonts\.(googleapis|gstatic)\.com/.test(url)
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  // Network failures carry their URL here; the sandbox blocks Google Fonts, which is not an app error.
+  page.on('requestfailed', (req) => {
+    const url = req.url()
+    if (isFontHost(url)) return
+    errors.push(`requestfailed: ${url} ${req.failure()?.errorText || ''}`)
+  })
   page.on('console', (m) => {
     if (m.type() !== 'error') return
     const t = m.text()
-    if (/ERR_CONNECTION_RESET|ERR_NAME_NOT_RESOLVED|fonts\.g/i.test(t)) return
-    errors.push(`console: ${t}`)
+    const url = m.location()?.url || ''
+    if (isFontHost(url) || isFontHost(t)) return
+    // Resource-load failures are reported (with URL) by 'requestfailed' above.
+    if (/^Failed to load resource/.test(t)) return
+    errors.push(`console: ${t}${url ? ` (${url})` : ''}`)
   })
   return errors
 }
