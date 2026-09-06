@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { CalendarDays, CalendarX, ChevronLeft, ListMusic, MapPin, MoreVertical, Pencil, Play, Plus, StickyNote, Trash2 } from 'lucide-react'
-import { addScoresToProject, deleteProject, getProject, getProjectSetlist, removeScoreFromProject, reorderProjectScores } from '../db/db.js'
+import { CalendarDays, CalendarX, ChevronLeft, CloudDownload, ListMusic, MapPin, MoreVertical, Pencil, Play, Plus, StickyNote, Trash2 } from 'lucide-react'
+import { addScoresToProject, db, deleteProject, getProject, getProjectSetlist, removeScoreFromProject, reorderProjectScores } from '../db/db.js'
+import { pluralize } from '../lib/format.js'
+import { useSync } from '../lib/sync/useSync.js'
 import { Button, ConfirmDialog, EmptyState, IconButton, Menu, Spinner, useToast } from '../components/ui/index.js'
 import { cn } from '../components/ui/cn.js'
 import { Setlist } from '../components/projects/Setlist.jsx'
@@ -21,6 +23,8 @@ export default function ProjectDetail() {
 function ProjectDetailView({ projectId }) {
   const navigate = useNavigate()
   const toast = useToast()
+  const sync = useSync()
+  const { user, online } = sync
 
   // null = loading, false = missing. getProject resolves undefined for a bad id.
   const project = useLiveQuery(() => getProject(projectId).then((p) => p || false), [projectId], null)
@@ -40,6 +44,13 @@ function ProjectDetailView({ projectId }) {
     return orderedIds.map((id) => byId.get(id)).filter(Boolean)
   }, [setlist, orderedIds])
   const totalPages = useMemo(() => items.reduce((n, x) => n + scorePageCount(x.score), 0), [items])
+
+  // Offline availability: a `files` row exists only for scores kept on this device.
+  const fileKeys = useLiveQuery(() => db.files.toCollection().primaryKeys(), [], null)
+  const downloadedIds = useMemo(() => (fileKeys ? new Set(fileKeys) : null), [fileKeys])
+  const downloadingIds = useMemo(() => new Set(sync.status.downloading), [sync.status.downloading])
+  const missingCount = useMemo(() => (downloadedIds ? items.filter((x) => !downloadedIds.has(x.score.id)).length : 0), [items, downloadedIds])
+  const [downloadTotal, setDownloadTotal] = useState(0) // > 0 while "Ladda ner alla" runs
 
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -119,6 +130,19 @@ function ProjectDetailView({ projectId }) {
 
   const handleOpen = useCallback((scoreId) => navigate(`/noter/${scoreId}`), [navigate])
 
+  const downloadAll = async () => {
+    if (downloadTotal > 0) return
+    setDownloadTotal(Math.max(1, missingCount))
+    try {
+      const n = await sync.downloadProject(projectId)
+      toast.success(n ? pluralize(n, 'stycke nedladdat', 'stycken nedladdade') : 'Allt är redan nedladdat')
+    } catch (err) {
+      toast.error(err?.message || 'Nedladdningen misslyckades. Försök igen.')
+    } finally {
+      setDownloadTotal(0)
+    }
+  }
+
   const confirmDelete = async () => {
     if (deleteBusy) return
     setDeleteBusy(true)
@@ -157,6 +181,11 @@ function ProjectDetailView({ projectId }) {
   const isEmpty = setlist !== null && items.length === 0
   const longNotes = (project.notes || '').length > NOTES_COLLAPSE_AT
   const canPerform = items.length > 0
+  // Online, the performance view downloads what it needs on the fly; offline it cannot.
+  const offlineBlocked = canPerform && missingCount > 0 && !online
+  const downloadingAll = downloadTotal > 0
+  const downloadDone = Math.min(downloadTotal, Math.max(0, downloadTotal - missingCount))
+  const showDownloadAll = !!user && (missingCount > 0 || downloadingAll)
 
   return (
     <div className="pb-6 animate-fade-in">
@@ -210,25 +239,48 @@ function ProjectDetailView({ projectId }) {
             ) : null}
           </div>
 
-          <div className="flex w-full items-center gap-2 sm:w-auto">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
             <Button
               variant="primary"
-              className="min-w-0 flex-1 sm:flex-none"
-              disabled={!canPerform}
-              title={canPerform ? undefined : 'Lägg till stycken för att starta konsertläge'}
+              className="min-w-0 flex-auto sm:flex-none"
+              disabled={!canPerform || offlineBlocked}
+              title={!canPerform ? 'Lägg till stycken för att starta konsertläge' : offlineBlocked ? 'Ladda ner alla stycken först' : undefined}
               onClick={() => navigate(`/projekt/${projectId}/spela`)}
               data-testid="start-performance"
             >
               <Play className="size-[18px]" aria-hidden="true" />
               Konsertläge
             </Button>
-            <Button variant="secondary" className="min-w-0 flex-1 sm:flex-none" onClick={() => setAdding(true)} data-testid="add-scores">
+            {showDownloadAll ? (
+              <Button
+                variant="secondary"
+                className="min-w-0 flex-auto sm:flex-none"
+                onClick={downloadAll}
+                loading={downloadingAll}
+                disabled={!online}
+                title={online ? undefined : 'Anslut till internet för att ladda ner'}
+                aria-live="polite"
+                data-testid="download-project"
+              >
+                {!downloadingAll ? <CloudDownload className="size-[18px]" aria-hidden="true" /> : null}
+                {downloadingAll ? `Laddar ner… ${downloadDone}/${downloadTotal}` : 'Ladda ner alla'}
+              </Button>
+            ) : null}
+            <Button variant="secondary" className="min-w-0 flex-auto sm:flex-none" onClick={() => setAdding(true)} data-testid="add-scores">
               <Plus className="size-[18px]" aria-hidden="true" />
               Lägg till stycken
             </Button>
           </div>
         </div>
-        {!canPerform && setlist !== null ? <p className="mt-2 text-xs text-ivory-500 sm:text-right">Lägg till stycken för att kunna starta konsertläget.</p> : null}
+        {!canPerform && setlist !== null ? (
+          <p className="mt-2 text-xs text-ivory-500 sm:text-right">Lägg till stycken för att kunna starta konsertläget.</p>
+        ) : offlineBlocked ? (
+          <p className="mt-2 text-xs text-ivory-500 sm:text-right" data-testid="performance-offline-hint">
+            Du är offline och {pluralize(missingCount, 'stycke är inte nedladdat', 'stycken är inte nedladdade')}. Ladda ner alla stycken först.
+          </p>
+        ) : showDownloadAll && !downloadingAll ? (
+          <p className="mt-2 text-xs text-ivory-500 sm:text-right">{pluralize(missingCount, 'stycke finns bara i molnet', 'stycken finns bara i molnet')} – ladda ner för att spela offline.</p>
+        ) : null}
       </header>
 
       <section className="mt-6 px-4 sm:px-6 md:mt-8 md:px-10" aria-label="Setlista">
@@ -252,7 +304,7 @@ function ProjectDetailView({ projectId }) {
           </EmptyState>
         ) : (
           <>
-            <Setlist items={items} onReorder={applyOrder} onMove={handleMove} onRemove={handleRemove} onOpen={handleOpen} />
+            <Setlist items={items} downloadedIds={downloadedIds} downloadingIds={downloadingIds} onReorder={applyOrder} onMove={handleMove} onRemove={handleRemove} onOpen={handleOpen} />
             <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-ivory-50/8 pt-4 text-sm text-ivory-400">
               <span className="tabular-nums" data-testid="setlist-summary">
                 {summarizeSetlist(items.length, totalPages)}

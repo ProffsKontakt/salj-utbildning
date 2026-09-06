@@ -5,6 +5,7 @@ import { db, totalFileBytes } from '../../db/db.js'
 import { formatBytes } from '../../lib/bytes.js'
 import { pluralize } from '../../lib/format.js'
 import { isIOS, isStandalone, requestPersistentStorage, storageEstimate } from '../../lib/platform.js'
+import { useSync } from '../../lib/sync/useSync.js'
 import { Button, useToast } from '../ui/index.js'
 import { SettingsCard, Notice } from './SettingsCard.jsx'
 
@@ -17,10 +18,12 @@ async function readPersisted() {
   }
 }
 
-/** Storage usage, quota, persistence status and the iOS caveats. */
+/** Storage usage, quota, persistence status and the iOS caveats. Usage counts downloaded PDFs only. */
 export function StorageCard() {
   const toast = useToast()
-  const library = useLiveQuery(async () => ({ count: await db.scores.count(), bytes: await totalFileBytes() }), [], null)
+  const { user } = useSync()
+  // `files` holds a row only for scores kept offline, so bytes = what actually lives on this device.
+  const library = useLiveQuery(async () => ({ count: await db.scores.count(), downloaded: await db.files.count(), bytes: await totalFileBytes() }), [], null)
   // { usage, quota } | null (unsupported) | undefined (loading)
   const [estimate, setEstimate] = useState(undefined)
   // true | false | null (unsupported) | undefined (loading)
@@ -40,7 +43,7 @@ export function StorageCard() {
   }, [])
 
   // Re-measure whenever the library changes (import, delete, clear).
-  const libraryKey = library ? `${library.count}:${library.bytes}` : ''
+  const libraryKey = library ? `${library.count}:${library.downloaded}:${library.bytes}` : ''
   useEffect(() => refresh(), [refresh, libraryKey])
 
   const requestPersist = async () => {
@@ -64,10 +67,22 @@ export function StorageCard() {
   const iosTab = isIOS() && !isStandalone()
 
   return (
-    <SettingsCard icon={HardDrive} title="Lagring" description="Allt sparas i webbläsarens databas på den här enheten – ingenting skickas till någon server.">
+    <SettingsCard
+      icon={HardDrive}
+      title="Lagring"
+      description={
+        user
+          ? 'Nedladdade noter sparas i webbläsarens databas på den här enheten. Stycken som bara finns i molnet tar inget utrymme här.'
+          : 'Allt sparas i webbläsarens databas på den här enheten – ingenting skickas till någon server förrän du loggar in.'
+      }
+    >
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <div className="text-[15px] text-ivory-50" data-testid="storage-summary">
-          {library === null ? 'Räknar…' : `${pluralize(library.count, 'stycke', 'stycken')} · ${formatBytes(library.bytes)} noter`}
+          {library === null
+            ? 'Räknar…'
+            : library.downloaded < library.count
+              ? `${pluralize(library.count, 'stycke', 'stycken')} · ${library.downloaded} nedladdade · ${formatBytes(library.bytes)} på enheten`
+              : `${pluralize(library.count, 'stycke', 'stycken')} · ${formatBytes(library.bytes)} noter`}
         </div>
         <div className="text-[13px] text-ivory-400">
           {estimate === undefined ? 'Mäter lagringsutrymme…' : estimate === null || !quota ? 'Lagringsutrymme kan inte mätas här' : `${formatBytes(usage)} av ${formatBytes(quota)} använt`}

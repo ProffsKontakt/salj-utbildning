@@ -1,9 +1,9 @@
 import { memo } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ChevronDown, ChevronUp, GripVertical, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Cloud, GripVertical, X } from 'lucide-react'
 import { pluralize } from '../../lib/format.js'
-import { IconButton } from '../ui/index.js'
+import { IconButton, Spinner } from '../ui/index.js'
 import { cn } from '../ui/cn.js'
 import { ScoreThumb } from './ScoreThumb.jsx'
 import { scorePageCount } from './projectUtils.js'
@@ -11,10 +11,12 @@ import { scorePageCount } from './projectUtils.js'
 /**
  * One row of the setlist. Sortable via the grip handle (pointer + keyboard);
  * the body opens the score; explicit up/down/remove buttons for everyone else.
- * All callbacks receive the score id.
+ * All callbacks receive the score id. `downloaded` = the PDF is on this device;
+ * a cloud score without it shows a small cloud mark.
  */
-export const SetlistItem = memo(function SetlistItem({ item, position, total, onOpen, onMove, onRemove, disabled = false }) {
+export const SetlistItem = memo(function SetlistItem({ item, position, total, onOpen, onMove, onRemove, disabled = false, downloaded = true, downloading = false }) {
   const { score } = item
+  const cloudOnly = !!score.ownerId && !downloaded
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: score.id,
     disabled,
@@ -29,6 +31,8 @@ export const SetlistItem = memo(function SetlistItem({ item, position, total, on
       data-testid="setlist-item"
       data-score-id={score.id}
       data-position={position}
+      data-downloaded={downloaded ? 'true' : 'false'}
+      data-cloud={score.ownerId ? 'true' : 'false'}
       className={cn(
         'relative flex flex-wrap items-center gap-x-1 gap-y-1 rounded-2xl bg-ink-800/55 py-1.5 pl-1 pr-1.5 hairline transition-[background-color,box-shadow,opacity] duration-150 sm:flex-nowrap sm:py-2 sm:pr-2',
         isDragging ? 'z-10 opacity-35' : 'hover:bg-ink-700/60',
@@ -56,12 +60,19 @@ export const SetlistItem = memo(function SetlistItem({ item, position, total, on
         type="button"
         onClick={() => onOpen(score.id)}
         className="flex min-w-0 flex-1 basis-40 items-center gap-3 rounded-xl px-1.5 py-1 text-left transition-colors hover:bg-ink-700/60 focus-visible:outline-2 focus-visible:outline-gold-400"
-        aria-label={`Öppna ${score.title}, plats ${position + 1} av ${total}`}
+        aria-label={`Öppna ${score.title}, plats ${position + 1} av ${total}${downloading ? ', laddar ner' : cloudOnly ? ', i molnet, inte nedladdad' : ''}`}
       >
         <ScoreThumb score={score} className="h-14 w-11 rounded-md" />
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-display text-[19px] leading-tight text-ivory-50" title={score.title}>
-            {score.title}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-display text-[19px] leading-tight text-ivory-50" title={score.title}>
+              {score.title}
+            </span>
+            {downloading ? (
+              <Spinner className="size-3.5 shrink-0 text-gold-300" />
+            ) : cloudOnly ? (
+              <Cloud className="size-3.5 shrink-0 text-ivory-400" aria-hidden="true" data-testid="setlist-cloud-mark" />
+            ) : null}
           </span>
           <span className="mt-0.5 block truncate text-[13px] text-ivory-400">
             <span className={cn(!score.composer && 'italic')}>{score.composer || 'Okänd kompositör'}</span>

@@ -44,7 +44,7 @@ export function Shell() {
           ))}
         </nav>
         <div className="mt-auto px-3 text-xs leading-relaxed text-ivory-500">
-          Dina noter sparas lokalt på den här enheten.
+          Noterna sparas på den här enheten – och i ditt konto när du är inloggad.
         </div>
       </aside>
 

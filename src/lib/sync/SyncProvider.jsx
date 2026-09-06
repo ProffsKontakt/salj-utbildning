@@ -1,7 +1,7 @@
 // React context around the cloud client + sync engine.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { USE_FAKE_CLOUD } from '../../config/supabase.js'
-import { db, adoptLocalLibrary, clearForeignUserData, clearUserData, countLocalOnly, countUnsynced, getProjectLinks } from '../../db/db.js'
+import { db, dbEvents, adoptLocalLibrary, clearForeignUserData, clearUserData, countLocalOnly, countUnsynced, getProjectLinks } from '../../db/db.js'
 import { createSyncEngine } from './engine.js'
 import { SyncContext } from './useSync.js'
 
@@ -20,6 +20,7 @@ export function SyncProvider({ children }) {
   const [authLoading, setAuthLoading] = useState(true)
   const [status, setStatus] = useState({ phase: 'idle', lastSyncAt: 0, error: null, pending: 0, progress: null, downloading: [] })
   const [localOnly, setLocalOnly] = useState(null) // { scores, projects } when a signed-in user has device-only rows
+  const keptLocalRef = useRef(0) // device-only rows the user chose to keep local; re-ask only when more appear
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine !== false)
   const engineRef = useRef(null)
 
@@ -67,16 +68,30 @@ export function SyncProvider({ children }) {
   }, [])
 
   // After sign-in: drop another account's cache and ask about device-only rows.
+  // Re-check after local writes (e.g. a backup import while signed in), but do not
+  // nag: once the user chose "keep local", ask again only when more rows appear.
   useEffect(() => {
     if (!user) return
     let active = true
+    let timer = null
+    const check = async () => {
+      const counts = await countLocalOnly()
+      const total = counts.scores + counts.projects
+      if (active && total > 0 && total > keptLocalRef.current) setLocalOnly(counts)
+    }
     ;(async () => {
       await clearForeignUserData(user.id)
-      const counts = await countLocalOnly()
-      if (active && counts.scores + counts.projects > 0) setLocalOnly(counts)
+      await check()
     })()
+    const onDirty = () => {
+      clearTimeout(timer)
+      timer = setTimeout(check, 2000)
+    }
+    dbEvents.addEventListener('dirty', onDirty)
     return () => {
       active = false
+      clearTimeout(timer)
+      dbEvents.removeEventListener('dirty', onDirty)
     }
   }, [user])
 
@@ -159,11 +174,17 @@ export function SyncProvider({ children }) {
       adoptLocal: async () => {
         if (!user) return 0
         const n = await adoptLocalLibrary(user.id)
+        keptLocalRef.current = 0
         setLocalOnly(null)
         engineRef.current?.schedule(0)
         return n
       },
-      keepLocal: () => setLocalOnly(null),
+      keepLocal: () => {
+        setLocalOnly((counts) => {
+          keptLocalRef.current = counts ? counts.scores + counts.projects : 0
+          return null
+        })
+      },
     }),
     [user, authLoading, cloud, online, status, localOnly, requireCloud],
   )
