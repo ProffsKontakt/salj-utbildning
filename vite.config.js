@@ -2,9 +2,14 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { fakeCloudPlugin } from './scripts/fakeCloudPlugin.js'
 
 export default defineConfig({
+  // NOTSTALL_FAKE_CLOUD=1 (e2e) serves an in-memory cloud under /__cloud and makes
+  // the app use it instead of Supabase.
+  define: { 'import.meta.env.VITE_FAKE_CLOUD': JSON.stringify(process.env.NOTSTALL_FAKE_CLOUD === '1' ? '1' : '') },
   plugins: [
+    ...(process.env.NOTSTALL_FAKE_CLOUD === '1' ? [fakeCloudPlugin()] : []),
     react(),
     tailwindcss(),
     VitePWA({

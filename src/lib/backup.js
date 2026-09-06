@@ -12,12 +12,16 @@
 //   thumbs/<scoreId>.jpg         cached thumbnail, stored (level 0). Optional: a missing
 //                                thumbnail is re-rendered in the background after import.
 //
+// Cloud bookkeeping (ownerId, dirty, remote*/cloud* versions, the tombstones
+// table) is never part of an archive: a restored row is a fresh device-only row
+// (ownerId null, dirty 1) that the account flow can adopt and upload later.
+//
 // The archive is produced with fflate's streaming `Zip` so each PDF is read from
 // IndexedDB and appended one at a time; the output is collected as chunks into a
 // Blob, keeping peak memory close to the size of the library (an in-memory
 // `zip()` call would need roughly twice that, which matters on an iPad).
 import { Zip, ZipDeflate, ZipPassThrough, unzipSync, strToU8, strFromU8 } from 'fflate'
-import { db, updateScore } from '../db/db.js'
+import { db, TABLE_NAMES, updateScore } from '../db/db.js'
 
 export const BACKUP_APP = 'notstall'
 export const BACKUP_FORMAT = 1
@@ -28,6 +32,16 @@ const yieldToUi = () => new Promise((r) => setTimeout(r, 0))
 
 function jsonBytes(value) {
   return strToU8(JSON.stringify(value))
+}
+
+/** Drop sync bookkeeping (ownerId, dirty and the remote…/cloud… version fields) from a row. */
+export function stripSyncFields(row) {
+  const out = {}
+  for (const [k, v] of Object.entries(row)) {
+    if (k === 'ownerId' || k === 'dirty' || k.startsWith('remote') || k.startsWith('cloud')) continue
+    out[k] = v
+  }
+  return out
 }
 
 /** Give every entry the export time as its modification date. */
@@ -85,7 +99,7 @@ export async function exportBackup({ onProgress } = {}) {
       continue
     }
     const { thumb, ...rest } = score
-    scoreRecords.push(rest)
+    scoreRecords.push(stripSyncFields(rest))
     fileMeta.push({ id: score.id, mime: file.mime || 'application/pdf', size: file.data.byteLength, name: file.name || '' })
     addEntry(`files/${score.id}.pdf`, new Uint8Array(file.data), { level: 0 })
     if (thumb instanceof ArrayBuffer && thumb.byteLength) {
@@ -98,7 +112,9 @@ export async function exportBackup({ onProgress } = {}) {
   }
 
   const kept = new Set(scoreRecords.map((s) => s.id))
-  const annotationRecords = annotations.filter((a) => kept.has(a.scoreId))
+  const annotationRecords = annotations.filter((a) => kept.has(a.scoreId)).map(stripSyncFields)
+  const projectRecords = projects.map(stripSyncFields)
+  const linkRecords = projectScores.map(stripSyncFields)
   const counts = {
     scores: scoreRecords.length,
     files: fileMeta.length,
@@ -120,8 +136,8 @@ export async function exportBackup({ onProgress } = {}) {
   addEntry('tables/scores.json', jsonBytes(scoreRecords))
   addEntry('tables/files.json', jsonBytes(fileMeta))
   addEntry('tables/annotations.json', jsonBytes(annotationRecords))
-  addEntry('tables/projects.json', jsonBytes(projects))
-  addEntry('tables/projectScores.json', jsonBytes(projectScores))
+  addEntry('tables/projects.json', jsonBytes(projectRecords))
+  addEntry('tables/projectScores.json', jsonBytes(linkRecords))
   addEntry('tables/settings.json', jsonBytes(settings))
   zipper.end()
   if (failure) throw failure
@@ -207,13 +223,23 @@ export async function readBackupManifest(file) {
 const asArray = (v) => (Array.isArray(v) ? v : [])
 const isRecord = (v) => v && typeof v === 'object' && typeof v.id === 'string' && v.id.length > 0
 
-/** Make a stored score record whole again (fills fields older exports may lack). */
-function normalizeScore(raw, fileSize, thumb) {
+/**
+ * Make a stored score record whole again (fills fields older exports may lack).
+ * The result is a device-only row: no owner, dirty, nothing uploaded yet.
+ */
+function normalizeScore(input, fileSize, thumb) {
+  const raw = stripSyncFields(input)
   const pageCount = Number.isInteger(raw.pageCount) && raw.pageCount > 0 ? raw.pageCount : Math.max(1, asArray(raw.pageOrder).length)
   const pageOrder = asArray(raw.pageOrder).filter((n) => Number.isInteger(n) && n >= 0 && n < pageCount)
   const t = Date.now()
   return {
     ...raw,
+    ownerId: null,
+    dirty: 1,
+    fileVersion: Math.max(1, Number(raw.fileVersion) || 1),
+    remoteFileVersion: 0,
+    thumbVersion: thumb ? Math.max(1, Number(raw.thumbVersion) || 1) : 0,
+    remoteThumbVersion: 0,
     title: String(raw.title || '').trim() || 'Namnlöst stycke',
     composer: String(raw.composer || ''),
     voice: String(raw.voice || ''),
@@ -269,25 +295,38 @@ export async function importBackup(file, mode = 'merge') {
     const thumb = thumbU8 && thumbU8.length ? ownBuffer(thumbU8) : null
     if (!thumb) needThumb.push(raw.id)
     const meta = fileMeta.get(raw.id)
-    scores.push(normalizeScore(raw, data.byteLength, thumb))
-    files.push({ id: raw.id, data, mime: meta?.mime || 'application/pdf', size: data.byteLength, name: meta?.name || '' })
+    const score = normalizeScore(raw, data.byteLength, thumb)
+    scores.push(score)
+    files.push({ id: raw.id, data, mime: meta?.mime || 'application/pdf', size: data.byteLength, name: meta?.name || '', version: score.fileVersion })
   }
   const importedIds = new Set(scores.map((s) => s.id))
-  const annotations = rawAnnotations.filter((a) => a && typeof a.scoreId === 'string' && Number.isInteger(a.pageIndex) && importedIds.has(a.scoreId)).map((a) => ({ ...a, strokes: asArray(a.strokes), texts: asArray(a.texts), note: String(a.note || '') }))
+  const now = Date.now()
+  const annotations = rawAnnotations
+    .filter((a) => a && typeof a.scoreId === 'string' && Number.isInteger(a.pageIndex) && importedIds.has(a.scoreId))
+    .map((a) => ({ ...stripSyncFields(a), strokes: asArray(a.strokes), texts: asArray(a.texts), note: String(a.note || ''), updatedAt: Number(a.updatedAt) || now, dirty: 1 }))
   const projects = rawProjects.map((p) => ({
-    ...p,
+    ...stripSyncFields(p),
     name: String(p.name || '').trim() || 'Namnlöst projekt',
     date: typeof p.date === 'string' ? p.date : '',
     venue: String(p.venue || ''),
     notes: String(p.notes || ''),
+    createdAt: Number(p.createdAt) || now,
+    updatedAt: Number(p.updatedAt) || now,
+    ownerId: null,
+    dirty: 1,
   }))
   const projectIds = new Set(projects.map((p) => p.id))
-  const links = rawLinks.filter((l) => typeof l.projectId === 'string' && typeof l.scoreId === 'string' && projectIds.has(l.projectId))
+  const links = rawLinks
+    .filter((l) => typeof l.projectId === 'string' && typeof l.scoreId === 'string' && projectIds.has(l.projectId))
+    .map((l) => ({ ...stripSyncFields(l), position: Number(l.position) || 0, updatedAt: Number(l.updatedAt) || now, ownerId: null, dirty: 1 }))
   const settings = rawSettings.map((s) => ({ key: s.key, value: s.value }))
 
-  await db.transaction('rw', db.tables, async () => {
+  // Only the content tables take part – tombstones (pending cloud deletions) are
+  // never restored from, nor wiped by, a backup.
+  const tables = TABLE_NAMES.map((name) => db.table(name))
+  await db.transaction('rw', tables, async () => {
     if (mode === 'replace') {
-      for (const t of db.tables) await t.clear()
+      for (const t of tables) await t.clear()
     }
     // In merge mode a link may point at a score that already lives here even if the
     // archive skipped it; keep those, drop links to scores that exist nowhere.
@@ -337,9 +376,11 @@ export async function importBackup(file, mode = 'merge') {
     if (validLinks.length) await db.projectScores.bulkPut(validLinks)
     if (importSettings.length) await db.settings.bulkPut(importSettings)
     // Compact positions to 0..n-1 in every project that received merged links.
+    // Moved rows are marked dirty so an owned setlist re-syncs its new order.
     for (const pid of touchedProjects) {
       const rows = await db.projectScores.where('projectId').equals(pid).sortBy('position')
-      await db.projectScores.bulkPut(rows.map((l, i) => ({ ...l, position: i })))
+      const moved = rows.filter((l, i) => l.position !== i).map((l) => ({ ...l, position: rows.indexOf(l), updatedAt: now, dirty: 1 }))
+      if (moved.length) await db.projectScores.bulkPut(moved)
     }
   })
 

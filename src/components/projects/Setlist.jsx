@@ -23,8 +23,10 @@ const DROP_ANIMATION = { duration: 180, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)'
  * @param {(scoreId:string) => void} p.onRemove
  * @param {(scoreId:string) => void} p.onOpen
  * @param {boolean} [p.disabled]
+ * @param {Set<string>|null} [p.downloadedIds]  score ids whose PDF is on this device (null = unknown)
+ * @param {Set<string>} [p.downloadingIds]      score ids currently being downloaded
  */
-export function Setlist({ items, onReorder, onMove, onRemove, onOpen, disabled = false }) {
+export function Setlist({ items, onReorder, onMove, onRemove, onOpen, disabled = false, downloadedIds = null, downloadingIds = null }) {
   const [activeId, setActiveId] = useState(null)
   const ids = useMemo(() => items.map((it) => it.score.id), [items])
   const sensors = useSensors(useSensor(PointerSensor, POINTER_OPTIONS), useSensor(KeyboardSensor, KEYBOARD_OPTIONS))
@@ -58,7 +60,18 @@ export function Setlist({ items, onReorder, onMove, onRemove, onOpen, disabled =
       <SortableContext items={ids} strategy={verticalListSortingStrategy}>
         <ol data-testid="setlist" aria-label="Setlista i spelordning" className="m-0 flex list-none flex-col gap-2 p-0">
           {items.map((it, i) => (
-            <SetlistItem key={it.score.id} item={it} position={i} total={items.length} onOpen={onOpen} onMove={onMove} onRemove={onRemove} disabled={disabled} />
+            <SetlistItem
+              key={it.score.id}
+              item={it}
+              position={i}
+              total={items.length}
+              downloaded={!downloadedIds || downloadedIds.has(it.score.id)}
+              downloading={!!downloadingIds?.has(it.score.id)}
+              onOpen={onOpen}
+              onMove={onMove}
+              onRemove={onRemove}
+              disabled={disabled}
+            />
           ))}
         </ol>
       </SortableContext>
