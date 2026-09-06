@@ -155,7 +155,7 @@ function ScoreViewerInner({ scoreId }) {
   if (missing) {
     return (
       <div className="stage-bg fixed inset-0 flex flex-col text-ivory-100">
-        <TopBar title="Notställ" onBack={() => navigate('/')} dark />
+        <TopBar title="Notställ" fallbackTo="/" dark />
         <EmptyState icon={Music} title="Stycket finns inte längre" description="Det kan ha tagits bort från biblioteket eller från en annan enhet.">
           <Button as={Link} to="/" replace>
             <Library className="size-4" />
@@ -173,7 +173,7 @@ function ScoreViewerInner({ scoreId }) {
       <TopBar
         title={score?.title || ' '}
         subtitle={subtitle}
-        onBack={() => navigate('/')}
+        fallbackTo="/"
         dark
         actions={
           <>
@@ -208,8 +208,9 @@ function ScoreViewerInner({ scoreId }) {
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="relative min-h-0 flex-1">
             {loadingScore || (score && docLoading && !docError) ? (
-              <div className="absolute inset-0 flex items-center justify-center text-gold-300" role="status" aria-label="Laddar noter">
+              <div className="absolute inset-0 flex items-center justify-center text-gold-300" role="status">
                 <Spinner className="size-9" />
+                <span className="sr-only">Laddar noter…</span>
               </div>
             ) : null}
 
@@ -231,7 +232,7 @@ function ScoreViewerInner({ scoreId }) {
 
             {score && doc && count > 0 ? (
               <ScoreStage
-                className="absolute inset-0"
+                className="absolute inset-y-0 left-[env(safe-area-inset-left)] right-[env(safe-area-inset-right)]"
                 scoreId={scoreId}
                 score={score}
                 doc={doc}
@@ -327,7 +328,7 @@ function ScoreViewerInner({ scoreId }) {
         onConfirm={confirmDelete}
         loading={deleting}
         title="Ta bort stycket?"
-        message={`"${score?.title || 'Stycket'}" och alla dess anteckningar tas bort från den här enheten. Det går inte att ångra.`}
+        message={`”${score?.title || 'Stycket'}” och alla dess anteckningar tas bort från den här enheten. Det går inte att ångra.`}
         confirmLabel="Ta bort"
       />
     </div>

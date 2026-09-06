@@ -139,8 +139,11 @@ export function collectErrors(page) {
   // Network failures carry their URL here; the sandbox blocks Google Fonts, which is not an app error.
   page.on('requestfailed', (req) => {
     const url = req.url()
+    const reason = req.failure()?.errorText || ''
     if (isFontHost(url)) return
-    errors.push(`requestfailed: ${url} ${req.failure()?.errorText || ''}`)
+    // Navigating away cancels in-flight module/asset loads; that is not an app error.
+    if (/ERR_ABORTED/.test(reason)) return
+    errors.push(`requestfailed: ${url} ${reason}`)
   })
   page.on('console', (m) => {
     if (m.type() !== 'error') return

@@ -1,6 +1,6 @@
 // Renders the app icon to PNG at the sizes the manifest needs, using the
 // Chromium bundled with Playwright. Run: npm run icons
-import { chromium } from 'playwright'
+import { chromium } from '@playwright/test'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'

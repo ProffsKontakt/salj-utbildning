@@ -22,7 +22,7 @@ pdf.js behöver `standard_fonts/`, `cmaps/` och `wasm/` vid körning. De kopiera
 ## Datamodell (`src/db/db.js`)
 
 ```
-scores        { id, title, composer, voice, key, notes, pageCount,
+scores        { id, title, composer, voice, key, notes, pageCount, fileSize,
                 pageOrder:number[], rotations:{[srcPage]:0|90|180|270},
                 thumb:ArrayBuffer|null, thumbMime, createdAt, updatedAt, lastOpenedAt }
 files         { id (= scoreId), data:ArrayBuffer (PDF), mime, size, name }
@@ -64,8 +64,9 @@ visningsordning, sätter rotation och ritar strokes med råa PDF-operatorer i an
 (pdf-lib wrappar befintligt innehåll i `q … Q`, så CTM är ren). Text ritas med Helvetica
 (WinAnsi) roterad lika mycket som sidan så den läses rättvänd.
 
-Sparande sker via `saveFile()` i `src/lib/download.js`: Web Share (iOS, endast `files`),
-annars `showSaveFilePicker`, annars `<a download>`.
+Sparande sker via `saveFile()` i `src/lib/download.js`: Web Share (endast `files`, det som
+fungerar på iOS), annars `<a download>`. `showSaveFilePicker` används medvetet inte – det är
+Chromium-exklusivt, kräver egen aktivering och hänger headless-körningar (Playwright).
 
 ## Plattformsregler
 
@@ -78,7 +79,10 @@ annars `showSaveFilePicker`, annars `<a download>`.
   `touchmove`/`gesturestart`-lyssnare med `preventDefault` medan ett verktyg är aktivt.
 * iOS-hemskärmsappen har **egen** IndexedDB, separat från Safari-fliken. Appen visar detta i
   inställningarna och uppmanar till installation innan import.
-* `navigator.storage.persist()` anropas vid start (`requestPersistentStorage`).
+* Beständig lagring begärs vid start (`requestPersistentStorage()` i `src/pwa.js`; Safari beviljar
+  den heuristiskt, t.ex. för installerade hemskärmsappar) och kan begäras igen via knappen
+  »Begär beständig lagring« i inställningarnas lagringskort, som bara visas när
+  `navigator.storage.persisted()` är `false`.
 * Wake lock begärs från en användargest och återbegärs vid `visibilitychange`.
 
 ## UI-konventioner
@@ -123,7 +127,7 @@ npm run icons      # regenerera PWA-ikoner från SVG
 | Anteckningar i PDF-användarrymd | `viewport.convertToPdfPoint` inkluderar CropBox-offset ⇒ samma koordinater som pdf-lib:s innehållsström. Rotation/zoom påverkar inte lagrade data. |
 | Export med råa operatorer | `drawSvgPath` speglar y-axeln och `drawLine` skapar en ExtGState per anrop. Vi bygger `q … Q`-block med en cachad ExtGState per alfa/blandning. |
 | Krypterade PDF:er rastreras vid import | pdf-lib kan inte dekryptera – `copyPages` skulle ge oläsliga sidor. pdf.js renderar dem, så vi gör om dem till bild-PDF (`isEncryptedPdf` via `getPermissions()`). |
-| Export/backup via Web Share på iOS | `<a download>` fungerar inte i installerade hemskärmsappar. `saveFile()` provar `navigator.share({ files })` → `showSaveFilePicker` → `<a download>`. |
+| Export/backup via Web Share på iOS | `<a download>` fungerar inte i installerade hemskärmsappar. `saveFile()` provar `navigator.share({ files })` → `<a download>` (inget `showSaveFilePicker`, se Export). På iOS rapporteras ett misslyckat share-ark som `'failed'` i stället för att tyst falla tillbaka. |
 | Kamera = en bild per tryck | iOS ignorerar `multiple` tillsammans med `capture`. Skanningsvyn loopar i stället. |
 | Canvas ≤ 12 MP och ≤ 4096 px/sida | iOS ≤ 17 vägrar större canvas (ritar tomt). `clampDpr` sänker DPR i stället för att krascha. |
 | `virtual:pwa-register` + uppskjuten reload | Ny version laddas om direkt i biblioteket men aldrig mitt i en konsert. `vite:preloadError` ⇒ reload (gamla chunkar 404:ar efter deploy). |

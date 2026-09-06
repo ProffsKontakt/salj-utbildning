@@ -32,7 +32,24 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
   const dprRef = useRef(1)
   const gestureRef = useRef(null) // active pointer gesture
   const frameRef = useRef(0)
-  const [eraserPos, setEraserPos] = useState(null)
+  // Eraser cursor: shown/hidden through state (rare), positioned through the DOM on
+  // every move so pen-rate pointermove does not re-render the layer.
+  const eraserRef = useRef(null)
+  const eraserPosRef = useRef(null)
+  const [eraserShown, setEraserShown] = useState(false)
+  const placeEraser = (el) => {
+    const p = eraserPosRef.current
+    if (el && p) el.style.transform = `translate(${p.x - ERASER_RADIUS}px, ${p.y - ERASER_RADIUS}px)`
+  }
+  const moveEraser = useCallback((x, y) => {
+    eraserPosRef.current = { x, y }
+    placeEraser(eraserRef.current)
+    setEraserShown(true)
+  }, [])
+  const hideEraser = useCallback(() => {
+    eraserPosRef.current = null
+    setEraserShown(false)
+  }, [])
   // The inline text editor is tied to the tool it was opened with: switching tools
   // (or swapping the page) closes it. Adjusting state during render is React's
   // sanctioned pattern for "reset on prop change".
@@ -119,8 +136,6 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
     guardsRef.current = null
   }, [])
 
-  useEffect(() => () => removeGuards(), [removeGuards])
-
   // ── Live stroke painting (batched per frame) ──────────────────────────
   const schedulePaintLive = useCallback(() => {
     if (frameRef.current) return
@@ -174,6 +189,47 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
     removeGuards()
     return g
   }, [removeGuards])
+
+  // Finish the active gesture without a pointer event. Used when the tool flips to
+  // 'none' or the page turns while a pointer is still down – the handlers are gone by
+  // the time pointerup arrives – and on unmount. The ink drawn so far is kept and
+  // committed through the editor the gesture started with (the page may have changed).
+  const finalizeGesture = useCallback(() => {
+    const g = endGesture()
+    if (!g) return
+    try {
+      rootRef.current?.releasePointerCapture(g.pointerId)
+    } catch {
+      /* ignore */
+    }
+    if (g.kind === 'stroke') {
+      // A lone touch-down becomes a dot, exactly like a pointerup on the same spot.
+      if (g.stroke.points.length === 2) g.stroke.points.push(g.stroke.points[0], g.stroke.points[1])
+      if (g.stroke.points.length >= 2 && g.editor?.commitStroke) {
+        // The live stroke stays visible until the base repaint (on commit) clears it.
+        g.editor.commitStroke(g.stroke)
+        return
+      }
+      clearLive()
+    } else if (g.kind === 'erase') {
+      hideEraser()
+      if (g.strokeIds.size || g.textIds.size) g.editor?.erase?.({ strokeIds: [...g.strokeIds], textIds: [...g.textIds] })
+      else paintBase(g.working)
+    }
+  }, [endGesture, clearLive, paintBase, hideEraser])
+
+  const finalizeRef = useRef(finalizeGesture)
+  useLayoutEffect(() => {
+    finalizeRef.current = finalizeGesture
+  }, [finalizeGesture])
+
+  // Layout effect so the commit lands before the browser paints the tool-less layer.
+  useLayoutEffect(() => {
+    if (!drawing) finalizeRef.current()
+  }, [drawing])
+
+  // Unmount (page scrolled out of the stage) mid-gesture: keep the ink, drop the guards.
+  useEffect(() => () => finalizeRef.current(), [])
 
   // ── Text editor helpers ───────────────────────────────────────────────
   const openTextEditor = useCallback(
@@ -246,7 +302,7 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
           : makeStroke({ tool: 'highlighter', color: toolSettings?.highlighterColor, width: toolSettings?.highlighterWidth })
       const [px, py] = viewport.convertToPdfPoint(x, y)
       stroke.points.push(px, py)
-      gestureRef.current = { kind: 'stroke', pointerId: e.pointerId, stroke }
+      gestureRef.current = { kind: 'stroke', pointerId: e.pointerId, stroke, editor }
       addGuards()
       schedulePaintLive()
       return
@@ -256,13 +312,14 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
       const g = {
         kind: 'erase',
         pointerId: e.pointerId,
+        editor,
         working: { strokes: annotation?.strokes || [], texts: annotation?.texts || [] },
         strokeIds: new Set(),
         textIds: new Set(),
       }
       gestureRef.current = g
       addGuards()
-      setEraserPos({ x, y })
+      moveEraser(x, y)
       eraseAt(g, x, y)
       return
     }
@@ -277,7 +334,7 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
     const g = gestureRef.current
     if (tool === 'eraser' && e.pointerType === 'mouse' && !g) {
       const [x, y] = toCss(e.clientX, e.clientY)
-      setEraserPos({ x, y })
+      moveEraser(x, y)
     }
     if (!g || g.pointerId !== e.pointerId) return
     e.stopPropagation()
@@ -298,7 +355,7 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
         last = toCss(ev.clientX, ev.clientY)
         eraseAt(g, last[0], last[1])
       }
-      if (last) setEraserPos({ x: last[0], y: last[1] })
+      if (last) moveEraser(last[0], last[1])
     }
   }
 
@@ -332,7 +389,7 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
       }
       clearLive()
     } else if (g.kind === 'erase') {
-      if (e.pointerType !== 'mouse') setEraserPos(null)
+      if (e.pointerType !== 'mouse') hideEraser()
       if (!cancelled && (g.strokeIds.size || g.textIds.size)) {
         editor?.erase?.({ strokeIds: [...g.strokeIds], textIds: [...g.textIds] })
       } else {
@@ -352,7 +409,7 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
   }
 
   const onPointerLeave = () => {
-    if (!gestureRef.current) setEraserPos(null)
+    if (!gestureRef.current) hideEraser()
   }
 
   useEffect(() => {
@@ -372,8 +429,9 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
       style={{ width, height, touchAction: drawing ? 'none' : undefined }}
       onPointerDown={drawing ? onPointerDown : undefined}
       onPointerMove={drawing ? onPointerMove : undefined}
-      onPointerUp={drawing ? (e) => finish(e) : undefined}
-      onPointerCancel={drawing ? (e) => finish(e, true) : undefined}
+      onPointerUp={(e) => finish(e)}
+      onPointerCancel={(e) => finish(e, true)}
+      onLostPointerCapture={(e) => finish(e, true)}
       onPointerLeave={drawing ? onPointerLeave : undefined}
       onContextMenu={drawing ? (e) => e.preventDefault() : undefined}
       role={drawing ? 'application' : undefined}
@@ -382,10 +440,14 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
       <canvas ref={baseRef} data-testid={testId} className="absolute inset-0 block" style={{ width, height }} aria-hidden="true" />
       <canvas ref={liveRef} className="absolute inset-0 block" style={{ width, height }} aria-hidden="true" />
 
-      {tool === 'eraser' && eraserPos ? (
+      {tool === 'eraser' && eraserShown ? (
         <div
-          className="pointer-events-none absolute rounded-full border-2 border-velvet-400 bg-velvet-500/15 shadow-[0_0_0_1px_rgba(255,255,255,0.7)]"
-          style={{ left: eraserPos.x - ERASER_RADIUS, top: eraserPos.y - ERASER_RADIUS, width: ERASER_RADIUS * 2, height: ERASER_RADIUS * 2 }}
+          ref={(el) => {
+            eraserRef.current = el
+            placeEraser(el)
+          }}
+          className="pointer-events-none absolute left-0 top-0 rounded-full border-2 border-velvet-400 bg-velvet-500/15 shadow-[0_0_0_1px_rgba(255,255,255,0.7)] will-change-transform"
+          style={{ width: ERASER_RADIUS * 2, height: ERASER_RADIUS * 2 }}
           aria-hidden="true"
         />
       ) : null}

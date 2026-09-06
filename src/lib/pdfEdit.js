@@ -23,6 +23,9 @@ const LOAD_OPTS = { ignoreEncryption: true, updateMetadata: false, throwOnInvali
 
 export const HIGHLIGHTER_OPACITY = 0.38
 
+// Max operators per page.pushOperators() call (see drawAnnotations).
+const OPS_CHUNK = 2000
+
 /** '#rrggbb' → [r,g,b] in 0..1 */
 export function hexToRgb01(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim())
@@ -180,7 +183,10 @@ function drawAnnotations(doc, page, ann, effectiveRotation, font) {
     for (let i = 2; i + 1 < pts.length; i += 2) ops.push(lineTo(pts[i], pts[i + 1]))
     ops.push(stroke(), popGraphicsState())
   }
-  if (ops.length) page.pushOperators(...ops)
+  // pdf-lib spreads the operators into function arguments (pushOperators →
+  // contentStream.push.apply → Array.prototype.push.apply); engines cap the
+  // argument count (~65k in JavaScriptCore), so push in bounded chunks.
+  for (let i = 0; i < ops.length; i += OPS_CHUNK) page.pushOperators(...ops.slice(i, i + OPS_CHUNK))
 
   for (const t of ann.texts || []) {
     const text = toWinAnsi(t.text, font)

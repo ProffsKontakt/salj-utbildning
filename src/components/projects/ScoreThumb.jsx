@@ -4,7 +4,8 @@ import { cn } from '../ui/cn.js'
 
 /** Small decorative thumbnail of a score's first page (falls back to a note glyph). */
 export function ScoreThumb({ score, className, iconClassName = 'size-4' }) {
-  const url = useObjectUrl(score?.thumb, score?.thumbMime || 'image/jpeg')
+  // Keyed on the record, not the buffer: live queries clone `thumb` on every refresh.
+  const url = useObjectUrl(score?.thumb, score?.thumbMime || 'image/jpeg', score ? `${score.id}:${score.updatedAt}:${score.thumb?.byteLength ?? 0}` : undefined)
   return (
     <div className={cn('paper relative shrink-0 overflow-hidden', className)} aria-hidden="true">
       {url ? (

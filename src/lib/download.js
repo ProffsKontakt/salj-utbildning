@@ -6,6 +6,8 @@
 // anchor download is used (the File System Access picker is deliberately not
 // used: it is Chromium-only, needs its own activation and hangs headless runs).
 
+import { isIOS } from './platform.js'
+
 export function supportsFileShare(file) {
   try {
     return !!(navigator.canShare && navigator.share && navigator.canShare({ files: [file] }))
@@ -19,7 +21,11 @@ export function supportsFileShare(file) {
  * @param {Blob|ArrayBuffer} data
  * @param {string} name  file name including extension
  * @param {string} mime
- * @returns {Promise<'shared'|'downloaded'|'cancelled'>}
+ * @returns {Promise<'shared'|'downloaded'|'cancelled'|'failed'>}
+ *   'failed' is returned on iOS when the share sheet rejects for a reason other
+ *   than the user cancelling (lost activation, a share already in progress, …):
+ *   the anchor fallback would silently do nothing there, so callers must show an
+ *   error and offer a retry inside a fresh tap.
  */
 export async function saveFile(data, name, mime = 'application/octet-stream') {
   const blob = data instanceof Blob ? data : new Blob([data], { type: mime })
@@ -31,7 +37,10 @@ export async function saveFile(data, name, mime = 'application/octet-stream') {
       return 'shared'
     } catch (err) {
       if (err?.name === 'AbortError') return 'cancelled'
-      // fall through to other strategies
+      // On iOS the anchor download below is a no-op (see header): report the
+      // failure honestly instead of pretending the file was saved.
+      if (isIOS()) return 'failed'
+      // elsewhere fall through to the anchor download
     }
   }
 

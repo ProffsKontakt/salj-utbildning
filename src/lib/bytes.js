@@ -21,6 +21,9 @@ export function bytesToBlob(bytes, mime) {
   return new Blob([bytes], { type: mime })
 }
 
+const oneDecimalFmt = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+const integerFmt = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 })
+
 export function formatBytes(n) {
   if (!Number.isFinite(n) || n <= 0) return '0 B'
   const units = ['B', 'kB', 'MB', 'GB']
@@ -30,7 +33,7 @@ export function formatBytes(n) {
     v /= 1000
     i++
   }
-  return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`
+  return `${v < 10 && i > 0 ? oneDecimalFmt.format(v) : integerFmt.format(v)} ${units[i]}`
 }
 
 /** Extract a filename without extension. */

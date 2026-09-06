@@ -6,7 +6,7 @@ import { cn } from './cn.js'
  * Minimal popover menu anchored to a trigger. Usage:
  * <Menu trigger={(props) => <IconButton {...props} />} items={[{label, icon, onSelect, danger, testId}]} testId="score-menu-popover" />
  * Items: { label, icon?, onSelect?, danger?, disabled?, hint?, key?, testId? } or { separator: true }.
- * Keyboard: the first item is focused on open, arrows move, Escape closes and refocuses the trigger.
+ * Keyboard: the first item is focused on open, arrows move, Escape or selecting an item closes and refocuses the trigger.
  */
 export function Menu({ trigger, items, align = 'end', testId, className, label = 'Meny' }) {
   const [open, setOpen] = useState(false)
@@ -102,6 +102,9 @@ export function Menu({ trigger, items, align = 'end', testId, className, label =
                       )}
                       onClick={() => {
                         setOpen(false)
+                        // Hand focus back to the trigger before the action runs, so keyboard users
+                        // continue from where they were (a dialog opened by onSelect takes it from there).
+                        btnRef.current?.focus?.()
                         item.onSelect?.()
                       }}
                     >

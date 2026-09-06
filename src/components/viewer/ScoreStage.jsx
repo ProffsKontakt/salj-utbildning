@@ -7,10 +7,12 @@ import { useElementSize } from '../../hooks/useElementSize.js'
 import { PdfPage } from '../PdfPage.jsx'
 import { Spinner, cn, useToast } from '../ui/index.js'
 import { AnnotationLayer } from './AnnotationLayer.jsx'
-import { useAnnotationEditor, prefetchAnnotation, peekAnnotation } from './useAnnotationEditor.js'
+import { useAnnotationEditor, prefetchAnnotation } from './useAnnotationEditor.js'
 import { useViewerGestures, clampZoom } from './useViewerGestures.js'
 
-const PRELOAD_MAX_ZOOM = 2
+// Preload the next page only at fit zoom: a zoomed page is up to 12 MP per canvas and a
+// second one would push iOS past its total canvas budget (blank pages).
+const PRELOAD_MAX_ZOOM = 1
 
 /** Resolve (and cache) the pdf.js page proxy for a source page index. */
 function usePageProxy(doc, pageIndex) {
@@ -37,28 +39,39 @@ function roundScale(s) {
   return Math.round(s * 10000) / 10000
 }
 
-/** One page slot: PdfPage + its annotation layer (owns the viewport). */
-function StagePage({ doc, pageIndex, scale, rotation, tool, toolSettings, penOnly, annotation, editor, interactive, current, offset, slotKey, onWrapper }) {
+/**
+ * One page slot: PdfPage + its annotation layer (owns the viewport).
+ *
+ * The preloaded slot is hidden inside a clipping box that covers exactly the current
+ * page's box: `visibility:hidden` alone keeps the (possibly larger) next page in layout,
+ * and an absolutely positioned descendant still extends the stage's scrollable
+ * overflow – a fitted page would then be scrolled off-centre and finger swipes would
+ * pan instead of turning. The annotation layer (two full-DPR canvases) is only mounted
+ * for the current slot; on swap it paints the (prefetched) ink in the same commit.
+ */
+function StagePage({ doc, pageIndex, scale, rotation, tool, toolSettings, penOnly, annotation, editor, interactive, current, slotKey, onWrapper }) {
   const [viewport, setVp] = useState(null)
   return (
     <div
       ref={(el) => onWrapper(slotKey, el)}
       className={cn(!current && 'pointer-events-none')}
-      style={current ? undefined : { position: 'absolute', left: offset, top: offset, visibility: 'hidden' }}
+      style={current ? undefined : { position: 'absolute', inset: 0, overflow: 'hidden', visibility: 'hidden' }}
       aria-hidden={current ? undefined : 'true'}
       data-stage-page={current ? 'current' : 'preload'}
     >
       <PdfPage doc={doc} pageIndex={pageIndex} scale={scale} rotation={rotation} onViewport={setVp}>
-        <AnnotationLayer
-          viewport={viewport}
-          tool={current ? tool : 'none'}
-          toolSettings={toolSettings}
-          penOnly={penOnly}
-          annotation={annotation}
-          interactive={current && interactive}
-          editor={editor}
-          testId={current ? 'annotation-canvas' : 'annotation-canvas-preload'}
-        />
+        {current ? (
+          <AnnotationLayer
+            viewport={viewport}
+            tool={tool}
+            toolSettings={toolSettings}
+            penOnly={penOnly}
+            annotation={annotation}
+            interactive={interactive}
+            editor={editor}
+            testId="annotation-canvas"
+          />
+        ) : null}
       </PdfPage>
     </div>
   )
@@ -151,19 +164,12 @@ export function ScoreStage({
     onAnnotationStateChange?.({ canUndo, canRedo, note, hasInk, loaded })
   }, [onAnnotationStateChange, canUndo, canRedo, note, hasInk, loaded])
 
-  // Prefetch the next page's ink so the preloaded page already carries it.
-  const [nextAnn, setNextAnn] = useState({ key: null, rec: null })
+  // Prefetch the next page's ink into the editor cache so the page turn paints it
+  // synchronously (the editor reads the cache for a page it has not loaded yet).
   useEffect(() => {
     if (!scoreId || nextPageIndex == null) return
-    let alive = true
-    prefetchAnnotation(scoreId, nextPageIndex).then((rec) => {
-      if (alive) setNextAnn({ key: `${scoreId}:${nextPageIndex}`, rec })
-    })
-    return () => {
-      alive = false
-    }
+    prefetchAnnotation(scoreId, nextPageIndex)
   }, [scoreId, nextPageIndex])
-  const nextAnnotation = nextAnn.key === `${scoreId}:${nextPageIndex}` ? nextAnn.rec : peekAnnotation(scoreId, nextPageIndex)
 
   // ── Navigation ───────────────────────────────────────────────────────
   const wrapperRefs = useRef(new Map())
@@ -286,7 +292,7 @@ export function ScoreStage({
   if (doc && pageIndex != null && scale > 0) {
     pages.push({ key: pageKey, pageIndex, scale, rotation, current: true, annotation })
     if (preload && nextPageIndex != null && nextScale > 0 && nextPageIndex !== pageIndex) {
-      pages.push({ key: `${scoreId}:${nextPageIndex}`, pageIndex: nextPageIndex, scale: nextScale, rotation: nextRotation, current: false, annotation: nextAnnotation })
+      pages.push({ key: `${scoreId}:${nextPageIndex}`, pageIndex: nextPageIndex, scale: nextScale, rotation: nextRotation, current: false, annotation: null })
     }
   }
   // Stable DOM order (by page index) so React swaps roles rather than remounting.
@@ -341,7 +347,6 @@ export function ScoreStage({
             editor={layerEditor}
             interactive={loaded}
             current={p.current}
-            offset={pad}
           />
         ))}
       </div>

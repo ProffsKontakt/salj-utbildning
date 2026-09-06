@@ -29,9 +29,11 @@ function ProjectDetailView({ projectId }) {
 
   const dbIds = useMemo(() => (setlist || []).map((x) => x.score.id), [setlist])
   const dbKey = dbIds.join('|')
-  // Optimistic order: applies while the database still shows the order it was derived from.
-  const [optimistic, setOptimistic] = useState(null) // { ids: string[], base: string }
-  const orderedIds = optimistic && optimistic.base === dbKey ? optimistic.ids : dbIds
+  // Optimistic order: applies while the database still shows an order it was derived from.
+  // `bases` holds every order the in-flight writes pass through (rapid consecutive moves chain),
+  // so the list does not bounce back to an intermediate order while earlier writes land.
+  const [optimistic, setOptimistic] = useState(null) // { ids: string[], bases: string[] }
+  const orderedIds = optimistic && optimistic.bases.some((b) => b === dbKey) ? optimistic.ids : dbIds
   const items = useMemo(() => {
     if (!setlist) return []
     const byId = new Map(setlist.map((x) => [x.score.id, x]))
@@ -49,7 +51,12 @@ function ProjectDetailView({ projectId }) {
 
   const applyOrder = useCallback(
     (ids) => {
-      setOptimistic({ ids, base: dbKey })
+      // If an earlier move is still being written, this one was derived from its optimistic order:
+      // keep accepting that order (and everything before it) until the database catches up.
+      setOptimistic((prev) => {
+        const chained = prev && prev.bases.some((b) => b === dbKey)
+        return { ids, bases: chained ? [...prev.bases, prev.ids.join('|')] : [dbKey] }
+      })
       reorderProjectScores(projectId, ids).catch(() => {
         setOptimistic(null)
         toast.error('Ordningen kunde inte sparas. Försök igen.')

@@ -107,8 +107,9 @@ export function AnnotationToolbar({ tool, onToolChange, settings, onSettingChang
 
   return (
     <div className={cn('pointer-events-none flex w-full flex-col items-center gap-2 px-2', className)} role="toolbar" aria-label="Ritverktyg" data-testid="annotation-toolbar">
+      {/* Colours + widths exceed a phone's width (6 swatches + 4 widths ≈ 470 px), so on small screens the row wraps instead of hiding options behind a scrollbar-less scroll. */}
       {showColors || showWidths || showSizes ? (
-        <div className="pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto no-scrollbar rounded-2xl bg-ink-800/95 p-1 shadow-stage backdrop-blur animate-fade-in" key={tool}>
+        <div className="pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto no-scrollbar rounded-2xl bg-ink-800/95 p-1 shadow-stage backdrop-blur animate-fade-in max-sm:flex-wrap max-sm:justify-center" key={tool}>
           {showColors ? (
             <div className="flex items-center gap-0.5" role="radiogroup" aria-label="Färg">
               {colors.map((c) => (
@@ -118,7 +119,7 @@ export function AnnotationToolbar({ tool, onToolChange, settings, onSettingChang
           ) : null}
           {showWidths ? (
             <>
-              <span className="mx-1 h-6 w-px bg-ivory-50/10" aria-hidden="true" />
+              <span className="mx-1 h-6 w-px bg-ivory-50/10 max-sm:hidden" aria-hidden="true" />
               <div className="flex items-center gap-0.5" role="radiogroup" aria-label="Bredd">
                 {widths.map((w) => (
                   <WidthOption key={w} width={w} tool={tool} selected={settings[widthKey] === w} onSelect={() => onSettingChange(widthKey, w)} />
@@ -128,7 +129,7 @@ export function AnnotationToolbar({ tool, onToolChange, settings, onSettingChang
           ) : null}
           {showSizes ? (
             <>
-              <span className="mx-1 h-6 w-px bg-ivory-50/10" aria-hidden="true" />
+              <span className="mx-1 h-6 w-px bg-ivory-50/10 max-sm:hidden" aria-hidden="true" />
               <div className="flex items-center gap-0.5" role="radiogroup" aria-label="Textstorlek">
                 {TEXT_SIZES.map((s) => (
                   <SizeOption key={s} size={s} selected={settings.textSize === s} onSelect={() => onSettingChange('textSize', s)} />

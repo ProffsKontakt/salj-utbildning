@@ -60,27 +60,29 @@ const Thumb = memo(function Thumb({ doc, pageIndex, rotation, displayIndex, curr
   }, [current])
 
   return (
-    <button
-      ref={ref}
-      type="button"
-      onClick={() => onSelect(displayIndex)}
-      aria-label={`Gå till sida ${displayIndex + 1}`}
-      aria-current={current ? 'page' : undefined}
-      data-testid={`thumb-${displayIndex}`}
-      className={cn(
-        'group relative flex shrink-0 flex-col items-center gap-1 rounded-xl p-1 transition-colors focus-visible:outline-gold-400',
-        current ? 'bg-gold-500/15 shadow-glow' : 'hover:bg-ink-700/70',
-      )}
-    >
-      <span className="block overflow-hidden rounded-md" style={{ height: THUMB_H, minWidth: scale ? undefined : PLACEHOLDER_W }}>
-        {near && scale ? (
-          <PdfPage doc={doc} pageIndex={pageIndex} scale={scale} rotation={rotation} quality="thumb" className="rounded-md" />
-        ) : (
-          <span className="block h-full animate-pulse-soft rounded-md bg-ink-700" style={{ width: PLACEHOLDER_W }} aria-hidden="true" />
+    <li className="flex shrink-0">
+      <button
+        ref={ref}
+        type="button"
+        onClick={() => onSelect(displayIndex)}
+        aria-label={`Gå till sida ${displayIndex + 1}`}
+        aria-current={current ? 'page' : undefined}
+        data-testid={`thumb-${displayIndex}`}
+        className={cn(
+          'group relative flex shrink-0 flex-col items-center gap-1 rounded-xl p-1 transition-colors focus-visible:outline-gold-400',
+          current ? 'bg-gold-500/15 shadow-glow' : 'hover:bg-ink-700/70',
         )}
-      </span>
-      <span className={cn('text-[11px] tabular-nums leading-none', current ? 'text-gold-300' : 'text-ivory-400')}>{displayIndex + 1}</span>
-    </button>
+      >
+        <span className="block overflow-hidden rounded-md" style={{ height: THUMB_H, minWidth: scale ? undefined : PLACEHOLDER_W }}>
+          {near && scale ? (
+            <PdfPage doc={doc} pageIndex={pageIndex} scale={scale} rotation={rotation} quality="thumb" className="rounded-md" />
+          ) : (
+            <span className="block h-full animate-pulse-soft rounded-md bg-ink-700" style={{ width: PLACEHOLDER_W }} aria-hidden="true" />
+          )}
+        </span>
+        <span className={cn('text-[11px] tabular-nums leading-none', current ? 'text-gold-300' : 'text-ivory-400')}>{displayIndex + 1}</span>
+      </button>
+    </li>
   )
 })
 
@@ -96,10 +98,10 @@ export function ThumbStrip({ doc, pageOrder, rotations = {}, displayIndex, onSel
   const rootRef = useRef(null)
   const lazy = pageOrder.length > EAGER_LIMIT
   return (
-    <div
+    <ul
       ref={rootRef}
       className={cn('flex gap-1.5 overflow-x-auto px-3 py-2 no-scrollbar', className)}
-      role="listbox"
+      role="list"
       aria-label="Sidor"
       data-testid="thumb-strip"
       style={{ scrollbarWidth: 'thin' }}
@@ -117,6 +119,6 @@ export function ThumbStrip({ doc, pageOrder, rotations = {}, displayIndex, onSel
           lazy={lazy}
         />
       ))}
-    </div>
+    </ul>
   )
 }

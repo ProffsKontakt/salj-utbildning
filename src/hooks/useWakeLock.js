@@ -9,12 +9,19 @@ export function useWakeLock(active) {
     let retryOnGesture = false
     const request = async () => {
       try {
-        sentinel = await navigator.wakeLock.request('screen')
-        sentinel.addEventListener('release', () => {
-          sentinel = null
+        const s = await navigator.wakeLock.request('screen')
+        if (disposed) {
+          // Resolved after cleanup (viewer closed / keepAwake toggled off): don't keep the screen awake.
+          s.release().catch(() => {})
+          return
+        }
+        sentinel = s
+        s.addEventListener('release', () => {
+          if (sentinel === s) sentinel = null
         })
       } catch {
         // Some browsers require user activation: retry on the next tap.
+        if (disposed) return
         sentinel = null
         retryOnGesture = true
       }

@@ -152,18 +152,46 @@ function distToSegment(px, py, ax, ay, bx, by) {
   return Math.hypot(px - x, py - y)
 }
 
+// PDF-space bounding box per stroke, cached on the (immutable) stroke object so the
+// eraser can skip most strokes with four comparisons instead of walking their points.
+const strokeBounds = new WeakMap()
+function boundsOf(stroke) {
+  const pts = stroke.points
+  let b = strokeBounds.get(stroke)
+  if (b && b.n === pts.length) return b
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (let i = 0; i + 1 < pts.length; i += 2) {
+    const x = pts[i]
+    const y = pts[i + 1]
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+  b = { minX, minY, maxX, maxY, n: pts.length }
+  strokeBounds.set(stroke, b)
+  return b
+}
+
 /** Is the CSS point within `radiusCss` px of the stroke (accounting for its width)? */
 export function strokeHit(stroke, viewport, cssX, cssY, radiusCss = 10) {
   const pts = stroke.points
   if (!pts || pts.length < 2) return false
-  const r = radiusCss + ((stroke.width || 1) * viewport.scale) / 2
-  let [ax, ay] = viewport.convertToViewportPoint(pts[0], pts[1])
-  if (pts.length === 2) return Math.hypot(cssX - ax, cssY - ay) <= r
+  // The viewport transform is a similarity (uniform scale, rotation, flip), so distances
+  // compare equally well in PDF user space: convert the pointer once instead of every
+  // stroke point (no per-point array allocations while erasing at pen event rate).
+  const t = viewport.transform
+  const k = Math.hypot(t[0], t[1]) || 1 // CSS px per PDF unit (scale × userUnit)
+  const r = (radiusCss + ((stroke.width || 1) * viewport.scale) / 2) / k
+  const [px, py] = viewport.convertToPdfPoint(cssX, cssY)
+  const b = boundsOf(stroke)
+  if (px < b.minX - r || px > b.maxX + r || py < b.minY - r || py > b.maxY + r) return false
+  if (pts.length === 2) return Math.hypot(px - pts[0], py - pts[1]) <= r
   for (let i = 2; i + 1 < pts.length; i += 2) {
-    const [bx, by] = viewport.convertToViewportPoint(pts[i], pts[i + 1])
-    if (distToSegment(cssX, cssY, ax, ay, bx, by) <= r) return true
-    ax = bx
-    ay = by
+    if (distToSegment(px, py, pts[i - 2], pts[i - 1], pts[i], pts[i + 1]) <= r) return true
   }
   return false
 }

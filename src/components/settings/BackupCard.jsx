@@ -5,8 +5,8 @@ import { saveFile } from '../../lib/download.js'
 import { formatBytes } from '../../lib/bytes.js'
 import { pluralize, todayIso } from '../../lib/format.js'
 import { isIOS } from '../../lib/platform.js'
-import { invalidateScoreDocument } from '../../lib/pdf.js'
 import { useFilePicker } from '../../hooks/useFilePicker.js'
+import { useHoldReload } from '../../hooks/useHoldReload.js'
 import { Button, Dialog, useToast, cn } from '../ui/index.js'
 import { SettingsCard, Notice } from './SettingsCard.jsx'
 
@@ -48,11 +48,19 @@ export function BackupCard() {
   const [mode, setMode] = useState('merge')
   const [importing, setImporting] = useState(false)
 
+  // A backup being built/restored or waiting for a tap must not be lost to an app-update reload.
+  useHoldReload(exporting || importing || ready !== null || pending !== null)
+
   const save = async (blob, name) => {
     const result = await saveFile(blob, name, BACKUP_MIME)
     if (result === 'cancelled') {
       setReady({ blob, name })
       toast.info('Delningen avbröts. Du kan spara kopian igen härifrån.')
+      return
+    }
+    if (result === 'failed') {
+      setReady({ blob, name })
+      toast.error('Delningen misslyckades. Tryck på Spara för att försöka igen.')
       return
     }
     setReady(null)
@@ -106,7 +114,15 @@ export function BackupCard() {
     setImporting(true)
     try {
       const result = await importBackup(pending.file, mode)
-      for (const id of result.scoreIds) invalidateScoreDocument(id)
+      // pdf.js is lazy-loaded (only the viewer needs it), so it must not be a static
+      // import here or the settings page would pull the whole library in eagerly. If it
+      // was loaded this session the LRU cache may hold stale documents for the scores
+      // the backup just replaced; otherwise this is a no-op.
+      await import('../../lib/pdf.js')
+        .then((m) => {
+          for (const id of result.scoreIds) m.invalidateScoreDocument(id)
+        })
+        .catch(() => {})
       setPending(null)
       const parts = [pluralize(result.scores, 'stycke', 'stycken'), pluralize(result.projects, 'projekt', 'projekt')]
       toast.success(`${mode === 'replace' ? 'Biblioteket ersattes' : 'Säkerhetskopian lästes in'}: ${parts.join(', ')}.`)

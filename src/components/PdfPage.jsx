@@ -79,6 +79,9 @@ export const PdfPage = memo(function PdfPage({ doc, pageIndex, scale = 1, rotati
         setActive(targetIndex)
         setRendered(true)
         onRendered?.()
+        // Thumbnails stay mounted for the whole strip/grid and never re-render at
+        // another scale, so drop the page's decoded images as soon as they are drawn.
+        if (quality === 'thumb') page.cleanup()
       })
       .catch((e) => {
         if (cancelled || isRenderCancelled(e)) return
@@ -91,6 +94,30 @@ export const PdfPage = memo(function PdfPage({ doc, pageIndex, scale = 1, rotati
     // `active` is intentionally excluded: a completed swap must not trigger a re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, scale, rotation, quality, onRendered])
+
+  // Release pdf.js page resources when the page goes away. pdf.js keeps every decoded
+  // image (ImageBitmap) and the operator list in the page proxy until cleanup() is
+  // called, so a session that has viewed many scanned pages would otherwise hold
+  // one full-resolution bitmap per page (iOS jetsams the tab). Declared after the
+  // render effect so task.cancel() runs first; cleanup() is a no-op while another
+  // render of the same page (e.g. the thumb strip) is in flight and runs when it ends.
+  useEffect(() => {
+    if (!page) return
+    return () => {
+      page.cleanup()
+    }
+  }, [page])
+
+  // Release the buffer that just went off-screen: a stale full-DPR bitmap per page
+  // would otherwise stay allocated for the rest of the session (iOS canvas budget).
+  useLayoutEffect(() => {
+    if (active === -1) return
+    const other = active === 0 ? canvasBRef.current : canvasARef.current
+    if (other && other.width) {
+      other.width = 0
+      other.height = 0
+    }
+  }, [active])
 
   const showPlaceholder = active === -1 && !error
   const canvasStyle = (index) => ({

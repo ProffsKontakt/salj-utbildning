@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Music, Search, SearchX, X } from 'lucide-react'
 import { db, deleteScore } from '../db/db.js'
-import { invalidateScoreDocument } from '../lib/pdf.js'
 import { pluralize } from '../lib/format.js'
 import { useSetting } from '../hooks/useSetting.js'
 import { PageHeader } from '../components/PageHeader.jsx'
@@ -83,7 +82,11 @@ export default function Library() {
     setDeleteBusy(true)
     try {
       await deleteScore(deleting.id)
-      invalidateScoreDocument(deleting.id)
+      // pdf.js is lazy-loaded (only the viewer needs it). If it was loaded this session
+      // the LRU cache may still hold this score's document; otherwise this is a no-op.
+      import('../lib/pdf.js')
+        .then((m) => m.invalidateScoreDocument(deleting.id))
+        .catch(() => {})
       toast.success('Stycket togs bort')
       setDeleting(null)
     } catch {

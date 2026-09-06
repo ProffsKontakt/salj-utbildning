@@ -136,8 +136,13 @@ function ScanSheetInner({ onClose, onDone, title }) {
     })
   }
 
+  // Pages whose preview failed cannot be decoded by this browser (e.g. HEIC/AVIF
+  // picked from the library). Handing them on would fail the whole import and
+  // lose every other photo, so block "Klar" until the user removes them.
+  const unreadable = pages.filter((p) => previews.get(p.id)?.error).length
+
   const finish = () => {
-    if (!pages.length) return
+    if (!pages.length || unreadable) return
     onDone?.(
       pages.map((p) => p.file),
       { enhance: !!enhance },
@@ -222,11 +227,16 @@ function ScanSheetInner({ onClose, onDone, title }) {
       </div>
 
       <footer className="pb-safe pl-safe pr-safe shrink-0 border-t border-ivory-50/8 bg-ink-900/95 backdrop-blur">
+        {unreadable ? (
+          <p className="mx-auto w-full max-w-5xl px-4 pt-3 text-center text-[13px] leading-snug text-danger sm:px-6" role="status">
+            {unreadable === 1 ? 'En sida kunde inte läsas.' : `${unreadable} sidor kunde inte läsas.`} Ta bort {unreadable === 1 ? 'den' : 'dem'} för att fortsätta.
+          </p>
+        ) : null}
         <div className="mx-auto flex w-full max-w-5xl items-center justify-end gap-2 px-4 py-3 sm:px-6">
           <Button variant="ghost" onClick={onClose} className="flex-1 sm:flex-none">
             Avbryt
           </Button>
-          <Button onClick={finish} disabled={count === 0} data-testid="scan-done" className="flex-[2] sm:flex-none sm:min-w-44">
+          <Button onClick={finish} disabled={count === 0 || unreadable > 0} data-testid="scan-done" className="flex-[2] sm:flex-none sm:min-w-44">
             Klar ({pluralize(count, 'sida', 'sidor')})
           </Button>
         </div>

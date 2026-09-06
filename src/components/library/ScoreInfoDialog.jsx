@@ -55,7 +55,7 @@ function InfoForm({ score, onClose }) {
       open
       onClose={saving ? undefined : onClose}
       title="Redigera info"
-      description="Titel och kompositör visas i biblioteket och i setlistor."
+      description="Titel och kompositör visas i biblioteket, i setlistor och i exporterade PDF:er."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>

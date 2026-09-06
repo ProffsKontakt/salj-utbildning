@@ -39,7 +39,8 @@ export default defineConfig({
   // E2E_DEV_ONLY=1 skips the production build/preview server (faster local iteration).
   webServer: [
     {
-      command: 'npx vite --port 4174 --strictPort',
+      // `npm run dev` (not bare `npx vite`) so predev copies the pdf.js assets to public/pdfjs.
+      command: 'npm run dev -- --port 4174 --strictPort',
       url: DEV,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

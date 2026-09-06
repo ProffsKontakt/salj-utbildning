@@ -2,7 +2,8 @@
 //
 // The record is loaded imperatively (getAnnotation) – never through useLiveQuery – so
 // our own writes cannot feed back into the editor. Every change is pushed onto an undo
-// history (snapshots, capped) and saved with putAnnotation, debounced 400 ms. Pending
+// history (capped) and saved with putAnnotation, debounced 400 ms. Records are immutable –
+// every mutation builds a new object – so the history holds plain references. Pending
 // changes are flushed when the page/score changes, on unmount, when the tab is hidden
 // and on pagehide, so a stroke is never lost.
 //
@@ -55,10 +56,6 @@ export function forgetAnnotations(scoreId) {
 /** Synchronous cache lookup (null when the page has not been loaded yet). */
 export function peekAnnotation(scoreId, pageIndex) {
   return cache.get(keyOf(scoreId, pageIndex)) || null
-}
-
-export function snapshot(rec) {
-  return typeof structuredClone === 'function' ? structuredClone(rec) : JSON.parse(JSON.stringify(rec))
 }
 
 export function hasInk(rec) {
@@ -174,10 +171,10 @@ export function useAnnotationEditor(scoreId, pageIndex, { onSaveError } = {}) {
       })
       .catch((err) => {
         if (!alive) return
+        // Never adopt an empty record for a page whose load failed: the database may
+        // still hold ink for it, and the next edit would replace it with the empty
+        // record. The page stays `loaded: false` (read-only) until a later load succeeds.
         onSaveErrorRef.current?.(err)
-        const record = normalize(scoreId, pageIndex, null)
-        remember(key, record)
-        setState((s) => (s.key === key ? s : { key, ann: record, past: [], future: [], rev: s.rev + 1, edited: false }))
       })
     return () => {
       alive = false
@@ -191,14 +188,17 @@ export function useAnnotationEditor(scoreId, pageIndex, { onSaveError } = {}) {
       if (!key) return
       setState((s) => {
         const sameKey = s.key === key
-        const base = sameKey ? s.ann : cache.get(key) || normalize(scoreId, pageIndex, null)
+        // Only mutate a record that has actually been loaded for this page (state or
+        // cache). Editing before the load resolves would start from an empty record and
+        // the debounced save would overwrite whatever the database holds.
+        const base = sameKey ? s.ann : cache.get(key)
         if (!base) return s
         const next = mutate(base)
         if (!next || next === base) return s
         const record = { ...next, scoreId, pageIndex }
         const rev = s.rev + 1
         if (!history) return { key, ann: record, past: sameKey ? s.past : [], future: sameKey ? s.future : [], rev, edited: true }
-        const past = [...(sameKey ? s.past : []), snapshot(base)]
+        const past = [...(sameKey ? s.past : []), base]
         if (past.length > HISTORY_CAP) past.splice(0, past.length - HISTORY_CAP)
         return { key, ann: record, past, future: [], rev, edited: true }
       })
@@ -270,7 +270,7 @@ export function useAnnotationEditor(scoreId, pageIndex, { onSaveError } = {}) {
       const past = s.past.slice()
       const prev = past.pop()
       const record = { ...prev, scoreId, pageIndex, note: s.ann.note }
-      return { key, ann: record, past, future: [...s.future, snapshot(s.ann)], rev: s.rev + 1, edited: true }
+      return { key, ann: record, past, future: [...s.future, s.ann], rev: s.rev + 1, edited: true }
     })
   }, [key, scoreId, pageIndex])
 
@@ -281,7 +281,7 @@ export function useAnnotationEditor(scoreId, pageIndex, { onSaveError } = {}) {
       const future = s.future.slice()
       const next = future.pop()
       const record = { ...next, scoreId, pageIndex, note: s.ann.note }
-      return { key, ann: record, past: [...s.past, snapshot(s.ann)], future, rev: s.rev + 1, edited: true }
+      return { key, ann: record, past: [...s.past, s.ann], future, rev: s.rev + 1, edited: true }
     })
   }, [key, scoreId, pageIndex])
 

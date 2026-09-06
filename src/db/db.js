@@ -117,6 +117,11 @@ export async function touchScoreOpened(id) {
 export async function replaceScoreFile(id, { pdfBytes, pageCount, pageOrder, rotations, thumb }) {
   if (!(pdfBytes instanceof ArrayBuffer)) throw new TypeError('pdfBytes must be an ArrayBuffer')
   await db.transaction('rw', db.scores, db.files, async () => {
+    // The caller may have spent seconds building the new bytes; if the score was
+    // deleted meanwhile (e.g. from another tab) we must not re-create an orphaned
+    // files row that nothing would ever clean up.
+    const score = await db.scores.get(id)
+    if (!score) throw new Error('Stycket hittades inte längre i biblioteket.')
     const file = await db.files.get(id)
     await db.files.put({
       id,

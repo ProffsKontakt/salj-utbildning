@@ -123,6 +123,15 @@ function PerformanceInner({ projectId }) {
   }, [drawing, chrome])
   const chromeVisible = drawing || !chrome.hidden
   const showChrome = useCallback(() => setChrome({ hidden: false, shownAt: Date.now() }), [])
+  // Hidden chrome is `inert` (not focusable, not clickable), so keyboard users need a way to
+  // bring it back: Tab (heading for the controls) or Escape reveals it again.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Tab' || e.key === 'Escape') showChrome()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showChrome])
   const onCenterTap = useCallback(() => setChrome((c) => (c.hidden ? { hidden: false, shownAt: Date.now() } : { ...c, hidden: true })), [])
 
   const exit = () => navigate(`/projekt/${projectId}`)
@@ -170,8 +179,9 @@ function PerformanceInner({ projectId }) {
           'pt-safe pl-safe pr-safe absolute inset-x-0 top-0 z-30 transition-[opacity,transform] duration-300',
           chromeVisible ? 'opacity-100' : 'pointer-events-none -translate-y-2 opacity-0',
         )}
-        aria-hidden={!chromeVisible}
+        inert={!chromeVisible}
         onPointerDown={showChrome}
+        onFocus={showChrome}
       >
         <div className="flex h-14 items-center gap-1 px-2 bg-gradient-to-b from-ink-950/95 via-ink-950/70 to-ink-950/0">
           <IconButton label="Avsluta konsertläge" onClick={exit} data-testid="performance-exit">
@@ -213,7 +223,7 @@ function PerformanceInner({ projectId }) {
         {score && doc && !docError ? (
           <ScoreStage
             key={score.id}
-            className="absolute inset-0"
+            className="absolute inset-y-0 left-[env(safe-area-inset-left)] right-[env(safe-area-inset-right)]"
             testId="performance-stage"
             scoreId={score.id}
             score={score}
@@ -257,8 +267,9 @@ function PerformanceInner({ projectId }) {
           'pb-safe pl-safe pr-safe absolute inset-x-0 bottom-0 z-30 flex flex-col items-center gap-2 px-2 pb-2 transition-[opacity,transform] duration-300 md:items-end md:px-4 md:pb-4',
           chromeVisible ? 'opacity-100' : 'pointer-events-none translate-y-2 opacity-0',
         )}
-        aria-hidden={!chromeVisible}
+        inert={!chromeVisible}
         onPointerDown={showChrome}
+        onFocus={showChrome}
       >
         {drawing ? (
           <AnnotationToolbar

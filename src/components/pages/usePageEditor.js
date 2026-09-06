@@ -7,8 +7,8 @@
 // through a ref) so 300 memoised tiles do not re-render on every change.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
-import { getScore, getScoreFile, normalizeRotation, updateScore } from '../../db/db.js'
-import { refreshThumbnail } from '../../lib/importScore.js'
+import { getScore, normalizeRotation, updateScore } from '../../db/db.js'
+import { acquireScoreDocument, releaseScoreDocument, renderThumbnail } from '../../lib/pdf.js'
 
 const THUMB_DEBOUNCE_MS = 800
 const EMPTY_ORDER = []
@@ -50,13 +50,26 @@ export function usePageEditor(scoreId, score, toast) {
   // ── Thumbnail refresh (debounced) ─────────────────────────────────────
   const thumbTimer = useRef(null)
 
+  // Renders from the shared, ref-counted document (the same one the tile grid
+  // and the viewer hold) instead of re-reading the file from IndexedDB and
+  // parsing it again on the worker.
   const runThumbRefresh = useCallback(async () => {
     try {
       const fresh = await getScore(scoreId)
       if (!fresh) return
-      const file = await getScoreFile(scoreId)
-      if (!file) return
-      await refreshThumbnail(fresh, file.data)
+      const first = fresh.pageOrder?.[0]
+      if (first === undefined) {
+        await updateScore(scoreId, { thumb: null })
+        return
+      }
+      let thumb
+      try {
+        const doc = await acquireScoreDocument(scoreId)
+        thumb = await renderThumbnail(doc, first, { rotation: (fresh.rotations || {})[first] || 0 })
+      } finally {
+        releaseScoreDocument(scoreId)
+      }
+      await updateScore(scoreId, { thumb })
     } catch {
       latest.current.toast?.error('Miniaturbilden kunde inte uppdateras.')
     }

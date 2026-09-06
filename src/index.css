@@ -19,7 +19,7 @@
   --color-ivory-200: #ddd5c3;
   --color-ivory-300: #bfb6a2;
   --color-ivory-400: #9a917f;
-  --color-ivory-500: #776f60;
+  --color-ivory-500: #8b8272; /* ≥4.5:1 on ink-800…ink-950 (hint text) */
 
   --color-gold-200: #f3e3b3;
   --color-gold-300: #e8cf86;

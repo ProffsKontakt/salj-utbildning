@@ -9,24 +9,31 @@ import { IconButton, TextArea, cn } from '../ui/index.js'
  * changes debounced. Keeps typing snappy while the source of truth is async.
  */
 function useDraft(value, onCommit, delay = 400) {
-  const [draft, setDraft] = useState({ base: value, text: value })
+  // base: the external value the draft was last synced with; committed: the last
+  // text handed to onCommit (the source of truth catches up with it asynchronously).
+  const [draft, setDraft] = useState({ base: value, text: value, committed: value })
   const timer = useRef(0)
   const onCommitRef = useRef(onCommit)
+  const valueRef = useRef(value)
   useEffect(() => {
     onCommitRef.current = onCommit
-  }, [onCommit])
-  // Adopt a new external value when the draft is not dirty (derived during render).
-  const dirty = draft.text !== draft.base
-  const text = !dirty && draft.base !== value ? value : draft.text
+    valueRef.current = value
+  }, [onCommit, value])
+  // Adopt a new external value only when nothing is pending and the value is neither the
+  // one we started from (the write has not landed yet) nor the one we wrote (it just did).
+  // Otherwise the textarea would snap back to the stale prop right after each commit.
+  const pending = draft.text !== draft.committed
+  const external = value !== draft.base && value !== draft.committed
+  const text = !pending && external ? value : draft.text
   const pendingRef = useRef(null) // text typed but not yet committed
   const change = (next) => {
-    setDraft({ base: value, text: next })
+    setDraft((d) => ({ base: value, text: next, committed: d.committed }))
     pendingRef.current = next
     clearTimeout(timer.current)
     timer.current = setTimeout(() => {
       pendingRef.current = null
       onCommitRef.current?.(next)
-      setDraft((d) => ({ base: next, text: d.text }))
+      setDraft((d) => ({ base: valueRef.current, text: d.text, committed: next }))
     }, delay)
   }
   // Flush a pending edit on unmount instead of dropping it.

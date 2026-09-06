@@ -4,7 +4,6 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { FileText, Images, CheckCircle2, AlertTriangle, X } from 'lucide-react'
 import { db } from '../../db/db.js'
 import { useSetting } from '../../hooks/useSetting.js'
-import { importFilesAsScore, defaultTitle } from '../../lib/importScore.js'
 import { pluralize } from '../../lib/format.js'
 import { Button, Dialog, IconButton, Select, Spinner, TextField, Toggle, useToast } from '../ui/index.js'
 import { cn } from '../ui/cn.js'
@@ -65,14 +64,23 @@ export function ImportDialog({ open, items, initialEnhance = null, onClose }) {
   const run = async () => {
     if (running || !pending.length) return
     setRunning(true)
+    // Loaded lazily (pdf.js + pdf-lib); useImportFlow has normally warmed it already.
+    let mod
+    try {
+      mod = await import('../../lib/importScore.js')
+    } catch {
+      setRunning(false)
+      toast.error('Importen kunde inte startas. Kontrollera anslutningen och försök igen.')
+      return
+    }
     const created = []
     let flattenedAny = false
     let failed = 0
     for (const row of pending) {
       patch(row.id, { status: 'working', progress: null, error: null })
       try {
-        const { score, flattened } = await importFilesAsScore(row.files, {
-          title: row.title.trim() || row.suggestedTitle || defaultTitle(row.files),
+        const { score, flattened } = await mod.importFilesAsScore(row.files, {
+          title: row.title.trim() || row.suggestedTitle || mod.defaultTitle(row.files),
           composer: row.composer.trim(),
           projectId: projectId || null,
           enhance: row.kind === 'images' ? !!enhance : false,

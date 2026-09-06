@@ -12,7 +12,8 @@ const MAX_CHIPS = 2
  * viewer; the kebab menu sits over the thumbnail so the two never nest.
  */
 export const ScoreCard = memo(function ScoreCard({ score, projects = [], onOpen, onPages, onAddToProject, onEdit, onDelete }) {
-  const thumbUrl = useObjectUrl(score.thumb, score.thumbMime || 'image/jpeg')
+  // Keyed on the record, not the buffer: live queries clone `thumb` on every refresh.
+  const thumbUrl = useObjectUrl(score.thumb, score.thumbMime || 'image/jpeg', `${score.id}:${score.updatedAt}:${score.thumb?.byteLength ?? 0}`)
   const pageCount = score.pageOrder?.length ?? score.pageCount ?? 0
   const extraChips = projects.length - MAX_CHIPS
 

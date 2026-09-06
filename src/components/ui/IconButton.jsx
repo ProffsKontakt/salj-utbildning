@@ -20,7 +20,8 @@ export const IconButton = forwardRef(function IconButton(
       type={type}
       aria-label={label}
       title={label}
-      aria-pressed={active || undefined}
+      // aria-pressed is only valid on role=button; callers that pass their own role (e.g. radio + aria-checked) own the state.
+      aria-pressed={rest.role ? undefined : active || undefined}
       className={cn(
         'inline-flex shrink-0 items-center justify-center transition-[background-color,transform,box-shadow] duration-150 active:scale-95 disabled:active:scale-100 select-none',
         SIZES[size] || SIZES.md,

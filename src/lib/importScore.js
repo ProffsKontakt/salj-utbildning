@@ -35,9 +35,12 @@ export function prettifyTitle(name) {
 /**
  * Turn an import item's files into PDF bytes.
  * Encrypted PDFs are flattened to images because they cannot be edited later.
- * @returns {Promise<{ bytes: ArrayBuffer, pageCount: number, flattened: boolean }>}
+ * With `thumbnail: true` the first page is rendered from the document that is
+ * already open (PDF paths only), so callers avoid a second parse; `thumb` is
+ * undefined when no thumbnail was rendered.
+ * @returns {Promise<{ bytes: ArrayBuffer, pageCount: number, flattened: boolean, thumb?: ArrayBuffer|null }>}
  */
-export async function filesToPdfBytes(files, { enhance = false, onProgress } = {}) {
+export async function filesToPdfBytes(files, { enhance = false, onProgress, thumbnail = false } = {}) {
   const pdfs = files.filter(isPdfFile)
   const images = files.filter((f) => !isPdfFile(f) && isImageFile(f))
   if (pdfs.length && images.length) throw new Error('Blanda inte PDF och bilder i samma stycke.')
@@ -52,16 +55,22 @@ export async function filesToPdfBytes(files, { enhance = false, onProgress } = {
       throw new Error(describePdfError(err))
     }
     try {
+      if (doc.numPages < 1) throw new Error('PDF-filen innehåller inga sidor.')
       let flattened = false
       if (await isEncryptedPdf(doc)) {
         bytes = await rasterizeToPdf(doc, { onProgress })
         flattened = true
         const check = await loadPdfDocument(bytes)
-        const pageCount = check.numPages
-        await destroyPdfDocument(check)
-        return { bytes, pageCount, flattened }
+        try {
+          const pageCount = check.numPages
+          const thumb = thumbnail ? await safeRenderThumbnail(check) : undefined
+          return { bytes, pageCount, flattened, thumb }
+        } finally {
+          await destroyPdfDocument(check)
+        }
       }
-      return { bytes, pageCount: doc.numPages, flattened }
+      const thumb = thumbnail ? await safeRenderThumbnail(doc) : undefined
+      return { bytes, pageCount: doc.numPages, flattened, thumb }
     } finally {
       await destroyPdfDocument(doc)
     }
@@ -75,6 +84,15 @@ export async function filesToPdfBytes(files, { enhance = false, onProgress } = {
   }
   const bytes = await imagesToPdf(jpegs)
   return { bytes, pageCount: jpegs.length, flattened: false }
+}
+
+/** Render a thumbnail from an open document. Never throws (returns null on failure). */
+async function safeRenderThumbnail(doc, pageIndex = 0, rotation = 0) {
+  try {
+    return await renderThumbnail(doc, pageIndex, { rotation })
+  } catch {
+    return null
+  }
 }
 
 /** Render the first page as a thumbnail. Never throws (returns null on failure). */
@@ -95,8 +113,9 @@ export async function makeThumbnailFromBytes(bytes, { pageIndex = 0, rotation = 
  * @returns {Promise<{ score: object, flattened: boolean }>}
  */
 export async function importFilesAsScore(files, { title, composer = '', projectId = null, enhance = false, onProgress } = {}) {
-  const { bytes, pageCount, flattened } = await filesToPdfBytes(files, { enhance, onProgress })
-  const thumb = await makeThumbnailFromBytes(bytes)
+  const { bytes, pageCount, flattened, thumb: renderedThumb } = await filesToPdfBytes(files, { enhance, onProgress, thumbnail: true })
+  // PDF imports render the thumbnail from the already-open document; image imports fall back to a fresh load.
+  const thumb = renderedThumb !== undefined ? renderedThumb : await makeThumbnailFromBytes(bytes)
   const score = await createScore({
     title: title || planImport(files)[0]?.suggestedTitle || defaultTitle(files),
     composer,

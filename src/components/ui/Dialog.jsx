@@ -8,22 +8,58 @@ import { Button } from './Button.jsx'
 /**
  * Modal dialog. Centered card on ≥sm screens, bottom sheet on phones.
  * Closes on Escape and backdrop tap. Renders nothing when `open` is false.
+ * Tab is trapped inside the panel and focus returns to the opener on close.
  * `testId` lands on the role=dialog panel.
  */
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 export function Dialog({ open, onClose, title, description, children, footer, size = 'md', className, closeLabel = 'Stäng', testId }) {
   const panelRef = useRef(null)
+  // Keep the latest onClose in a ref so the effect below only runs when `open`
+  // flips – callers often pass a fresh arrow function on every render, and
+  // re-running the effect would move focus back to the first field on each keystroke.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
   useEffect(() => {
     if (!open) return
+    const previouslyFocused = document.activeElement
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose?.()
+        onCloseRef.current?.()
+        return
+      }
+      if (e.key !== 'Tab') return
+      // Trap Tab inside the panel: the page behind the backdrop is still tabbable.
+      const panel = panelRef.current
+      if (!panel) return
+      const modals = document.querySelectorAll('[role="dialog"][aria-modal="true"]')
+      if (modals[modals.length - 1] !== panel) return // another modal is on top
+      const els = [...panel.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length > 0)
+      if (!els.length) {
+        e.preventDefault()
+        return
+      }
+      const first = els[0]
+      const last = els[els.length - 1]
+      const active = document.activeElement
+      if (e.shiftKey) {
+        if (active === first || !panel.contains(active)) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else if (active === last || !panel.contains(active)) {
+        e.preventDefault()
+        first.focus()
       }
     }
     document.addEventListener('keydown', onKey)
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    // focus the first focusable element
+    // focus the first focusable element (once, when the dialog opens)
     const t = setTimeout(() => {
       const el = panelRef.current?.querySelector('input, textarea, select, button:not([data-close])')
       el?.focus?.()
@@ -32,8 +68,12 @@ export function Dialog({ open, onClose, title, description, children, footer, si
       clearTimeout(t)
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = prevOverflow
+      // restore focus to whatever opened the dialog
+      if (previouslyFocused && typeof previouslyFocused.focus === 'function' && document.contains(previouslyFocused)) {
+        previouslyFocused.focus()
+      }
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
   const widths = { sm: 'sm:max-w-sm', md: 'sm:max-w-md', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl' }

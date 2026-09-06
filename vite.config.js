@@ -35,7 +35,8 @@ export default defineConfig({
         // Precache the app, the pdf.js worker, its WASM decoders and standard fonts so a
         // freshly installed app can open scanned PDFs offline. CJK CMaps are fetched on demand.
         globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff,woff2,wasm,pfb,ttf}'],
-        globIgnores: ['pdfjs/cmaps/**', 'pdfjs/wasm/*.js'],
+        // quickjs-eval.wasm only runs PDF JavaScript actions (forms) – never needed for scores.
+        globIgnores: ['pdfjs/cmaps/**', 'pdfjs/wasm/*.js', 'pdfjs/wasm/quickjs-eval.wasm'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/pdfjs\//, /\.[a-z0-9]+$/i],
@@ -71,6 +72,25 @@ export default defineConfig({
       devOptions: { enabled: false },
     }),
   ],
+  // Pre-bundle every heavy dependency up front so the dev server never discovers a new
+  // dependency mid-session (which would trigger a full page reload).
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      'react-dom/client',
+      'react-router-dom',
+      'dexie',
+      'dexie-react-hooks',
+      'lucide-react',
+      'pdfjs-dist/legacy/build/pdf.mjs',
+      'pdf-lib',
+      'fflate',
+      '@dnd-kit/core',
+      '@dnd-kit/sortable',
+      '@dnd-kit/utilities',
+    ],
+  },
   build: {
     target: 'es2022',
     sourcemap: false,

@@ -149,6 +149,15 @@ async function fileToU8(file) {
   return new Uint8Array(buf)
 }
 
+/**
+ * Standalone ArrayBuffer for an unzipped entry. fflate already hands back a private
+ * copy per entry (both stored and deflated), so the bytes can be used as-is; only a
+ * view into a larger buffer needs copying.
+ */
+function ownBuffer(u8) {
+  return u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength ? u8.buffer : u8.slice().buffer
+}
+
 function unzipOrThrow(u8, opts) {
   try {
     return unzipSync(u8, opts)
@@ -225,14 +234,16 @@ function normalizeScore(raw, fileSize, thumb) {
 /**
  * Restore a backup.
  * @param {File|Blob} file
- * @param {'merge'|'replace'} mode  merge = keep existing records (same ids are overwritten),
+ * @param {'merge'|'replace'} mode  merge = keep existing records (same ids are overwritten,
+ *                                  local settings and setlist entries are kept),
  *                                  replace = wipe every table first
  * @returns {Promise<{ scores:number, projects:number, annotations:number, skipped:string[], scoreIds:string[] }>}
  */
 export async function importBackup(file, mode = 'merge') {
   if (mode !== 'merge' && mode !== 'replace') throw new Error(`Okänt importläge: ${mode}`)
-  const u8 = await fileToU8(file)
-  const entries = unzipOrThrow(u8)
+  // Every entry comes back as its own copy, so the zip bytes are garbage as soon
+  // as unzipSync returns – do not keep a reference to them.
+  const entries = unzipOrThrow(await fileToU8(file))
   parseManifest(entries)
 
   const rawScores = asArray(parseJsonEntry(entries, 'tables/scores.json', [])).filter(isRecord)
@@ -253,9 +264,9 @@ export async function importBackup(file, mode = 'merge') {
       skipped.push(raw.title || raw.id)
       continue
     }
-    const data = pdf.slice().buffer // standalone ArrayBuffer (the zip buffer is one big slab)
+    const data = ownBuffer(pdf)
     const thumbU8 = entries[`thumbs/${raw.id}.jpg`]
-    const thumb = thumbU8 && thumbU8.length ? thumbU8.slice().buffer : null
+    const thumb = thumbU8 && thumbU8.length ? ownBuffer(thumbU8) : null
     if (!thumb) needThumb.push(raw.id)
     const meta = fileMeta.get(raw.id)
     scores.push(normalizeScore(raw, data.byteLength, thumb))
@@ -281,17 +292,55 @@ export async function importBackup(file, mode = 'merge') {
     // In merge mode a link may point at a score that already lives here even if the
     // archive skipped it; keep those, drop links to scores that exist nowhere.
     let known = importedIds
+    let validLinks = links
+    let importSettings = settings
+    const touchedProjects = new Set()
     if (mode === 'merge') {
       const existing = await db.scores.toCollection().primaryKeys()
       known = new Set([...importedIds, ...existing])
+      validLinks = validLinks.filter((l) => known.has(l.scoreId))
+      // A project may already hold the same score under another link id (the score
+      // was removed and re-added after the backup was taken). Keep the local entry
+      // and append new ones after it – duplicates cannot be repaired from the UI.
+      if (validLinks.length) {
+        const pids = [...new Set(validLinks.map((l) => l.projectId))]
+        const local = await db.projectScores.where('projectId').anyOf(pids).toArray()
+        const archiveIds = new Set(validLinks.map((l) => l.id))
+        const pairKey = (l) => `${l.projectId}\u0000${l.scoreId}`
+        const taken = new Set(local.filter((l) => !archiveIds.has(l.id)).map(pairKey))
+        const localIds = new Set(local.map((l) => l.id))
+        const nextPos = new Map()
+        for (const l of local) nextPos.set(l.projectId, Math.max(nextPos.get(l.projectId) ?? -1, l.position) + 1)
+        validLinks = validLinks
+          .filter((l) => {
+            const k = pairKey(l)
+            if (taken.has(k)) return false
+            taken.add(k)
+            return true
+          })
+          .map((l) => {
+            touchedProjects.add(l.projectId)
+            const base = nextPos.get(l.projectId) ?? 0
+            return localIds.has(l.id) ? l : { ...l, position: base + (Number(l.position) || 0) }
+          })
+      }
+      // "Behåller allt du har nu": settings already chosen on this device win.
+      const localKeys = new Set(await db.settings.toCollection().primaryKeys())
+      importSettings = settings.filter((s) => !localKeys.has(s.key))
+    } else {
+      validLinks = validLinks.filter((l) => known.has(l.scoreId))
     }
-    const validLinks = links.filter((l) => known.has(l.scoreId))
     if (scores.length) await db.scores.bulkPut(scores)
     if (files.length) await db.files.bulkPut(files)
     if (annotations.length) await db.annotations.bulkPut(annotations)
     if (projects.length) await db.projects.bulkPut(projects)
     if (validLinks.length) await db.projectScores.bulkPut(validLinks)
-    if (settings.length) await db.settings.bulkPut(settings)
+    if (importSettings.length) await db.settings.bulkPut(importSettings)
+    // Compact positions to 0..n-1 in every project that received merged links.
+    for (const pid of touchedProjects) {
+      const rows = await db.projectScores.where('projectId').equals(pid).sortBy('position')
+      await db.projectScores.bulkPut(rows.map((l, i) => ({ ...l, position: i })))
+    }
   })
 
   // Best effort, in the background: render thumbnails the archive did not carry.
