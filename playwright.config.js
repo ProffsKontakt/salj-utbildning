@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 const DEV = 'http://localhost:4174'
 const PROD = 'http://localhost:4173'
+const CLOUD = 'http://localhost:4175' // dev server with the in-memory fake cloud
 
 export default defineConfig({
   testDir: './e2e',
@@ -22,7 +23,7 @@ export default defineConfig({
   projects: [
     {
       name: 'dev',
-      testIgnore: [/mobile\.spec/, /prod-smoke\.spec/],
+      testIgnore: [/mobile\.spec/, /prod-smoke\.spec/, /cloud\.spec/],
       use: { ...devices['Desktop Chrome'], baseURL: DEV },
     },
     {
@@ -34,6 +35,11 @@ export default defineConfig({
       name: 'prod',
       testMatch: /prod-smoke\.spec/,
       use: { ...devices['Desktop Chrome'], baseURL: PROD },
+    },
+    {
+      name: 'cloud',
+      testMatch: /cloud\.spec/,
+      use: { ...devices['Desktop Chrome'], baseURL: CLOUD },
     },
   ],
   // E2E_DEV_ONLY=1 skips the production build/preview server (faster local iteration).
