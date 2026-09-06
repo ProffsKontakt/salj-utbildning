@@ -88,5 +88,5 @@ rader ligger kvar med `deleted_at` (kan städas med ett schemalagt jobb senare).
 `e2e/cloud.spec.js` kör mot ett fejkat moln (`scripts/fakeCloudPlugin.js`, startas
 med `NOTSTALL_FAKE_CLOUD=1`) och testar två enheter mot samma konto: uppladdning,
 nedladdning vid öppning, anteckningar åt båda håll, borttagning, projekt, offline-kö
-och utloggning. Mot det riktiga projektet finns en användare `smoke@notstall.test`
-som bara används av det automatiska rökprovet.
+och utloggning. Mot det riktiga projektet kördes ett rökprov (inloggning, RLS, Storage,
+mjuk radering) med en tillfällig användare som togs bort efteråt.

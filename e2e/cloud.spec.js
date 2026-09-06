@@ -27,12 +27,23 @@ async function waitSynced(page) {
     .toBe('idle:0')
 }
 
+/** Client-side navigation (react-router listens to popstate) – works while the context is offline. */
+async function navigateInApp(page, path) {
+  await page.evaluate((p) => {
+    window.history.pushState({}, '', p)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  }, path)
+}
+
 async function syncNow(page) {
   await page.evaluate(() => window.__notstallSync.syncNow())
   await waitSynced(page)
 }
 
 test.describe('Konto & molnsynk (fejkat moln)', () => {
+  // Two devices, several sync rounds and downloads per test.
+  test.describe.configure({ timeout: 300_000 })
+
   test.beforeEach(async ({ request }) => {
     await request.post('/__cloud/reset')
   })
@@ -98,7 +109,7 @@ test.describe('Konto & molnsynk (fejkat moln)', () => {
     // B deletes the score; A's copy disappears on the next sync.
     await pageB.goto('/')
     await pageB.getByTestId('score-card').first().getByTestId('score-menu').click()
-    await pageB.getByRole('menuitem', { name: /Ta bort/ }).click()
+    await pageB.getByRole('menuitem', { name: /Ta bort(?! nedladdning)/ }).click()
     await pageB.getByRole('dialog').getByRole('button', { name: /Ta bort/ }).click()
     await expect(pageB.getByTestId('score-card')).toHaveCount(0)
     await pageB.goto('/konto')
@@ -146,13 +157,21 @@ test.describe('Konto & molnsynk (fejkat moln)', () => {
     await expect(pageB.getByTestId('setlist-item').first()).toHaveAttribute('data-downloaded', 'false')
 
     // Offline: a cloud-only score cannot be opened, the button explains why.
+    // (Dev server: warm the lazily loaded viewer route while still online.)
+    await navigateInApp(pageB, '/noter/finns-inte')
+    await expect(pageB.getByText(/finns inte/)).toBeVisible()
+    await navigateInApp(pageB, '/')
+    await expect(pageB.getByTestId('score-card').first()).toBeVisible()
     await ctxB.setOffline(true)
-    await pageB.goto(`/noter/${idA}`)
+    await navigateInApp(pageB, `/noter/${idA}`)
     await expect(pageB.getByTestId('download-needed')).toBeVisible()
     await expect(pageB.getByTestId('download-score-now')).toBeDisabled()
+    await expect(pageB.getByTestId('download-hint')).toContainText(/internet/i)
     await ctxB.setOffline(false)
-    await pageB.getByTestId('download-score-now').click()
+    // Back online: opening the score downloads it (auto-download on).
+    await pageB.goto(`/noter/${idA}`)
     await waitForRenderedPage(pageB)
+    expect((await readTable(pageB, 'files')).length).toBe(1)
 
     // Download everything in the project.
     await pageB.goto(projectUrl)
@@ -191,17 +210,24 @@ test.describe('Konto & molnsynk (fejkat moln)', () => {
     await page.goto('/konto')
     await waitSynced(page)
 
+    // Warm the viewer + pdf.js chunks in this page while online, then go offline.
+    await navigateInApp(page, `/noter/${id}`)
+    await waitForRenderedPage(page)
+    await navigateInApp(page, '/konto')
+    await expect(page.getByTestId('account-card')).toBeVisible()
     await context.setOffline(true)
-    await page.goto(`/noter/${id}`)
+    await navigateInApp(page, `/noter/${id}`)
     await waitForRenderedPage(page)
     await page.getByTestId('tool-pen').click()
     await dragAcross(page, page.getByTestId('annotation-canvas'), 0.2, 0.3, 0.6, 0.6)
     await expect.poll(async () => (await readTable(page, 'annotations')).length).toBe(1)
-    await page.goto('/konto')
+    await navigateInApp(page, '/konto')
     await expect(page.getByTestId('sync-status')).toHaveAttribute('data-phase', /offline|idle|error/)
     await expect.poll(() => page.evaluate(() => window.__notstallSync.status.pending)).toBeGreaterThan(0)
 
     await context.setOffline(false)
+    // The dev client may reload once the connection is back; start from a fresh load.
+    await page.goto('/konto')
     await syncNow(page)
     // The fake cloud now holds the annotation: a fresh context sees it.
     const rows = await page.request.get('/__cloud/pull?table=annotations&since=1970-01-01T00:00:00.000Z', {

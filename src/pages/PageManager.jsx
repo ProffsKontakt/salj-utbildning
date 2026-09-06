@@ -9,10 +9,12 @@ import { appendFilesToScore } from '../lib/importScore.js'
 import { isImageFile, isPdfFile } from '../lib/image.js'
 import { pluralize } from '../lib/format.js'
 import { usePdfDocument } from '../hooks/usePdfDocument.js'
+import { useOfflineFile } from '../hooks/useOfflineFile.js'
 import { IMPORT_ACCEPT, useFilePicker } from '../hooks/useFilePicker.js'
 import { useSetting } from '../hooks/useSetting.js'
 import { TopBar, Button, IconButton, Menu, ConfirmDialog, EmptyState, Spinner, useToast } from '../components/ui/index.js'
 import { ScanSheet } from '../components/import/ScanSheet.jsx'
+import { DownloadNeeded } from '../components/viewer/DownloadNeeded.jsx'
 import { PageGrid } from '../components/pages/PageGrid.jsx'
 import { RemovedPages } from '../components/pages/RemovedPages.jsx'
 import { AddPagesMenu } from '../components/pages/AddPagesMenu.jsx'
@@ -39,8 +41,14 @@ function PageManagerInner({ scoreId }) {
   const score = scoreRow && scoreRow.id !== scoreId ? null : scoreRow
   const missing = score === undefined
 
+  // Page management needs the PDF bytes: a cloud-only score must be downloaded first.
+  const onDownloadError = useCallback((message) => toast.error(message), [toast])
+  const offline = useOfflineFile(scoreId, { onError: onDownloadError })
+  const cloudOnly = !!score && offline.cloudOnly
+  const canOpen = !!score && !offline.loading && !offline.cloudOnly
+
   const editor = usePageEditor(scoreId, score || null, toast)
-  const { doc, error: docError, loading: docLoading } = usePdfDocument(score ? scoreId : null, editor.version)
+  const { doc, error: docError, loading: docLoading } = usePdfDocument(canOpen ? scoreId : null, `${editor.version}:${offline.version}`)
 
   const scrollRef = useRef(null)
   const [resetOpen, setResetOpen] = useState(false)
@@ -148,14 +156,14 @@ function PageManagerInner({ scoreId }) {
   const subtitle = score ? `${pluralize(count, 'sida', 'sidor')} · ${score.title}` : 'Läser in…'
 
   const menuItems = [
-    ...addPagesItems({ onScan: addFromScan, onFiles: addFromFiles, disabled: busy || !score }),
+    ...addPagesItems({ onScan: addFromScan, onFiles: addFromFiles, disabled: busy || !score || cloudOnly }),
     { separator: true },
     {
       key: 'reset',
       label: 'Återställ ursprunglig ordning',
       icon: ListRestart,
       onSelect: () => setResetOpen(true),
-      disabled: busy || !score || editor.isOriginal,
+      disabled: busy || !score || cloudOnly || editor.isOriginal,
     },
   ]
 
@@ -185,19 +193,23 @@ function PageManagerInner({ scoreId }) {
       <div ref={scrollRef} className="pl-safe pr-safe min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="mx-auto w-full max-w-7xl px-3 pb-[calc(env(safe-area-inset-bottom)+2rem)] pt-4 sm:px-6 sm:pt-5">
           {/* Toolbar */}
-          <div className="mb-4 flex flex-wrap items-center gap-3 sm:mb-5">
-            <AddPagesMenu onScan={addFromScan} onFiles={addFromFiles} disabled={busy || !score} />
-            <p className="min-w-0 flex-1 basis-56 text-[13px] leading-snug text-ivory-400">
-              Dra i handtaget eller använd pilarna för att ändra ordning. Ändringar sparas direkt.
-              <span className="hidden md:inline"> Tangentbord: piltangenter flyttar fokus, Skift + pil flyttar sidan, R roterar, Delete tar bort.</span>
-            </p>
-          </div>
+          {!cloudOnly ? (
+            <div className="mb-4 flex flex-wrap items-center gap-3 sm:mb-5">
+              <AddPagesMenu onScan={addFromScan} onFiles={addFromFiles} disabled={busy || !score} />
+              <p className="min-w-0 flex-1 basis-56 text-[13px] leading-snug text-ivory-400">
+                Dra i handtaget eller använd pilarna för att ändra ordning. Ändringar sparas direkt.
+                <span className="hidden md:inline"> Tangentbord: piltangenter flyttar fokus, Skift + pil flyttar sidan, R roterar, Delete tar bort.</span>
+              </p>
+            </div>
+          ) : null}
 
           {/* Content */}
-          {!score ? (
+          {!score || offline.loading ? (
             <div className="flex items-center justify-center py-24 text-gold-300" role="status" aria-label="Läser in">
               <Spinner className="size-8" />
             </div>
+          ) : cloudOnly ? (
+            <DownloadNeeded score={score} offline={offline} backTo={viewerPath} backLabel="Till visaren" className="py-6" />
           ) : docError ? (
             <EmptyState icon={Music} title="Filen kunde inte öppnas" description={docError} className="py-12">
               <Button as={Link} to={viewerPath} variant="secondary">
@@ -234,13 +246,13 @@ function PageManagerInner({ scoreId }) {
             />
           )}
 
-          {score && docLoading && count > 0 ? (
+          {canOpen && docLoading && count > 0 ? (
             <p className="mt-3 flex items-center justify-center gap-2 text-xs text-ivory-500" role="status">
               <Spinner className="size-3.5" /> Läser in sidorna…
             </p>
           ) : null}
 
-          {score ? (
+          {score && !cloudOnly ? (
             <div className="mt-6">
               <RemovedPages doc={doc} removed={editor.removed} rotations={editor.rotations} scrollRoot={scrollRef} onRestore={editor.restore} disabled={busy} />
             </div>

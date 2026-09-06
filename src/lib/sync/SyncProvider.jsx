@@ -124,11 +124,11 @@ export function SyncProvider({ children }) {
       signOut: async ({ clearDevice = true } = {}) => {
         const c = requireCloud()
         const uid = user?.id
+        engineRef.current?.setUser(null) // stop scheduling before the data goes away
         await c.signOut()
-        engineRef.current?.setUser(null)
-        setUser(null)
-        setLocalOnly(null)
         if (clearDevice && uid) await clearUserData(uid)
+        setLocalOnly(null)
+        setUser(null)
       },
 
       syncNow: () => engineRef.current?.sync('manual'),

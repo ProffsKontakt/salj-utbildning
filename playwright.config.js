@@ -51,6 +51,14 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
+    {
+      // Second dev server with the in-memory fake cloud (see scripts/fakeCloudPlugin.js).
+      command: 'npm run dev -- --port 4175 --strictPort',
+      url: CLOUD,
+      env: { NOTSTALL_FAKE_CLOUD: '1' },
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
     ...(process.env.E2E_DEV_ONLY
       ? []
       : [
