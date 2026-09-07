@@ -82,19 +82,41 @@ export async function waitForRenderedPage(page, stageTestId = 'viewer-stage') {
   return rendered
 }
 
-/** Fraction of non-white pixels on a canvas element (0..1). */
+/**
+ * Fraction of non-white pixels of a rendered page (0..1). Works for pages drawn by
+ * pdf.js (a canvas) and for pages served from the image cache (an <img>).
+ */
 export async function nonWhiteFraction(locator) {
   return locator.evaluate((el) => {
-    const canvas = el.tagName === 'CANVAS' ? el : el.querySelector('canvas')
-    const ctx = canvas.getContext('2d')
-    const { width, height } = canvas
-    if (!width || !height) return 0
-    const d = ctx.getImageData(0, 0, width, height).data
-    let dark = 0
-    const total = width * height
-    for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) dark++
-    return dark / total
+    const measure = (source, width, height) => {
+      if (!width || !height) return 0
+      const c = document.createElement('canvas')
+      const k = Math.min(1, 600 / Math.max(width, height))
+      c.width = Math.max(1, Math.round(width * k))
+      c.height = Math.max(1, Math.round(height * k))
+      const ctx = c.getContext('2d')
+      ctx.drawImage(source, 0, 0, c.width, c.height)
+      const d = ctx.getImageData(0, 0, c.width, c.height).data
+      let dark = 0
+      const total = c.width * c.height
+      for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) dark++
+      return dark / total
+    }
+    const img = el.tagName === 'IMG' ? el : el.querySelector('img')
+    if (img && img.complete && img.naturalWidth && getComputedStyle(img).visibility !== 'hidden') return measure(img, img.naturalWidth, img.naturalHeight)
+    const canvases = el.tagName === 'CANVAS' ? [el] : [...el.querySelectorAll('canvas')]
+    const canvas = canvases.find((c) => c.width && c.height && getComputedStyle(c).display !== 'none') || canvases[0]
+    if (!canvas) return 0
+    return measure(canvas, canvas.width, canvas.height)
   })
+}
+
+/** Wait until the visible current page is served from the image cache (not drawn by pdf.js). */
+export async function waitForCachedPage(page, stageTestId = 'viewer-stage') {
+  const stage = page.getByTestId(stageTestId)
+  const cached = stage.locator('[data-page-index][data-rendered="true"][data-source="image"]:visible').first()
+  await expect(cached).toBeVisible({ timeout: 60_000 })
+  return cached
 }
 
 /** Fraction of pixels with alpha > 0 on a (transparent) overlay canvas. */

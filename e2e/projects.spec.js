@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { makePdf, importPdfViaUi, waitForRenderedPage, readTable, collectErrors } from './helpers.js'
+import { makePdf, importPdfViaUi, waitForRenderedPage, waitForCachedPage, readTable, collectErrors } from './helpers.js'
 
 test.describe('Projekt & konsertläge', () => {
   test('create project, add scores, reorder, perform through all pages', async ({ page }) => {
@@ -47,15 +47,18 @@ test.describe('Projekt & konsertläge', () => {
     await expect(card).toContainText('3 sidor')
     await card.click()
 
-    // performance mode walks 3 pages across 2 scores
+    // performance mode walks 3 pages across 2 scores – every page from the image cache
+    await expect.poll(async () => (await readTable(page, 'pageImages')).length, { timeout: 60_000 }).toBe(3)
     await page.getByTestId('start-performance').click()
     await page.waitForURL(/\/spela/)
-    await waitForRenderedPage(page, 'performance-stage')
+    await waitForCachedPage(page, 'performance-stage')
     await expect(page.getByTestId('performance-title')).toBeVisible()
+    // on stage nothing is drawn by pdf.js
+    await expect(page.getByTestId('performance-stage').locator('[data-page-index] > canvas[width]:not([width="0"])')).toHaveCount(0)
     await page.getByTestId('performance-next').click()
-    await waitForRenderedPage(page, 'performance-stage')
+    await waitForCachedPage(page, 'performance-stage')
     await page.getByTestId('performance-next').click()
-    await waitForRenderedPage(page, 'performance-stage')
+    await waitForCachedPage(page, 'performance-stage')
     // at the end: next is disabled, prev still works
     await expect(page.getByTestId('performance-next')).toBeDisabled()
     await page.getByTestId('performance-prev').click()

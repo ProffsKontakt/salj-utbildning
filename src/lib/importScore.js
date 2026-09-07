@@ -4,6 +4,7 @@ import { imageFileToJpeg, isImageFile, isPdfFile } from './image.js'
 import { imagesToPdf, appendPdf } from './pdfEdit.js'
 import { loadPdfDocument, destroyPdfDocument, renderThumbnail, isEncryptedPdf, invalidateScoreDocument, describePdfError } from './pdf.js'
 import { rasterizeToPdf } from './pdfConvert.js'
+import { prepareScore, PRIORITY } from './pageCache.js'
 import { baseName } from './bytes.js'
 
 /**
@@ -125,6 +126,8 @@ export async function importFilesAsScore(files, { title, composer = '', projectI
     fileName: files.length === 1 ? files[0].name : '',
     projectId,
   })
+  // Pre-render the pages in the background so the first open (and the stage) is instant.
+  prepareScore(score.id, PRIORITY.import)
   return { score, flattened }
 }
 
@@ -153,6 +156,7 @@ export async function appendFilesToScore(score, file, files, { enhance = false, 
   }
   await replaceScoreFile(score.id, patch)
   invalidateScoreDocument(score.id)
+  prepareScore(score.id, PRIORITY.score)
   return { added: extraCount, pageCount: total }
 }
 

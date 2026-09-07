@@ -8,8 +8,10 @@
 // and on pagehide, so a stroke is never lost.
 //
 // A small module-level cache keeps the most recently loaded records so that turning to
-// a prefetched page shows its ink synchronously (no flash).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+// a prefetched page shows its ink synchronously (no flash). An edit made before the
+// page's record has loaded (pen down right after a page turn) is queued and applied as
+// soon as the load lands – a stroke is never dropped.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { emptyAnnotation, getAnnotation, putAnnotation } from '../../db/db.js'
 
 export const HISTORY_CAP = 60
@@ -158,6 +160,9 @@ export function useAnnotationEditor(scoreId, pageIndex, { onSaveError } = {}) {
   }, [flush])
 
   // ── Load ─────────────────────────────────────────────────────────────────
+  // Edits that arrived before the record was loaded, replayed once it is.
+  const queueRef = useRef([]) // [{ key, mutate, history }]
+  const applyRef = useRef(null)
   useEffect(() => {
     if (!key || cache.has(key)) return
     let alive = true
@@ -168,12 +173,16 @@ export function useAnnotationEditor(scoreId, pageIndex, { onSaveError } = {}) {
         if (!cache.has(key)) remember(key, record)
         // Adopt the loaded record unless the user has already changed this page.
         setState((s) => (s.key === key ? s : { key, ann: cache.get(key), past: [], future: [], rev: s.rev + 1, edited: false }))
+        const queued = queueRef.current.filter((q) => q.key === key)
+        queueRef.current = []
+        for (const q of queued) applyRef.current?.(q.mutate, { history: q.history })
       })
       .catch((err) => {
         if (!alive) return
         // Never adopt an empty record for a page whose load failed: the database may
         // still hold ink for it, and the next edit would replace it with the empty
         // record. The page stays `loaded: false` (read-only) until a later load succeeds.
+        queueRef.current = queueRef.current.filter((q) => q.key !== key)
         onSaveErrorRef.current?.(err)
       })
     return () => {
@@ -186,11 +195,16 @@ export function useAnnotationEditor(scoreId, pageIndex, { onSaveError } = {}) {
   const apply = useCallback(
     (mutate, { history = true } = {}) => {
       if (!key) return
+      // Only mutate a record that has actually been loaded for this page (state or
+      // cache). Editing before the load resolves would start from an empty record and
+      // the debounced save would overwrite whatever the database holds – so the edit
+      // waits for the load instead.
+      if (!cache.has(key)) {
+        queueRef.current.push({ key, mutate, history })
+        return
+      }
       setState((s) => {
         const sameKey = s.key === key
-        // Only mutate a record that has actually been loaded for this page (state or
-        // cache). Editing before the load resolves would start from an empty record and
-        // the debounced save would overwrite whatever the database holds.
         const base = sameKey ? s.ann : cache.get(key)
         if (!base) return s
         const next = mutate(base)
@@ -205,6 +219,10 @@ export function useAnnotationEditor(scoreId, pageIndex, { onSaveError } = {}) {
     },
     [key, scoreId, pageIndex],
   )
+
+  useLayoutEffect(() => {
+    applyRef.current = apply
+  }, [apply])
 
   const commitStroke = useCallback(
     (stroke) => {

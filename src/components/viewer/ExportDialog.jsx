@@ -8,6 +8,7 @@ import { saveFile, safeFileName } from '../../lib/download.js'
 import { formatBytes } from '../../lib/bytes.js'
 import { isIOS } from '../../lib/platform.js'
 import { Dialog, Button, Toggle, useToast, cn } from '../ui/index.js'
+import { usePdfDocument } from '../../hooks/usePdfDocument.js'
 
 function RadioCard({ checked, onSelect, title, description, name, testId, disabled }) {
   return (
@@ -29,10 +30,11 @@ function RadioCard({ checked, onSelect, title, description, name, testId, disabl
  * @param {boolean} p.open
  * @param {() => void} p.onClose
  * @param {object} p.score
- * @param {object|null} p.doc   pdf.js document (needed for the flattened variant)
  */
-export function ExportDialog({ open, onClose, score, doc }) {
+export function ExportDialog({ open, onClose, score }) {
   const toast = useToast()
+  // The pdf.js document is only needed for the flattened variant; opened while the dialog is up.
+  const { doc } = usePdfDocument(open && score ? score.id : null)
   const [includeAnnotations, setIncludeAnnotations] = useState(true)
   const [mode, setMode] = useState('vector')
   const [busy, setBusy] = useState(false)

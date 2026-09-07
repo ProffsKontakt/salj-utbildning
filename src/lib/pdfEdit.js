@@ -13,11 +13,16 @@ import {
   setLineCap,
   setLineJoin,
   setStrokingColor,
+  setFillingColor,
   moveTo,
   lineTo,
+  appendBezierCurve,
+  closePath,
+  fill,
   stroke,
 } from 'pdf-lib'
 import { toArrayBuffer } from './bytes.js'
+import { hasPressure, pressureWidths, traceVariableWidth } from './annotationPaint.js'
 
 const LOAD_OPTS = { ignoreEncryption: true, updateMetadata: false, throwOnInvalidObject: false }
 
@@ -157,6 +162,68 @@ export async function buildExportPdf({ srcBytes, pageOrder, rotations = {}, anno
   return toArrayBuffer(await out.save({ useObjectStreams: true }))
 }
 
+/**
+ * Canvas-like path sink that emits PDF operators. Quadratic curves become cubic
+ * Béziers; arcs (always swept the way traceVariableWidth asks, i.e. decreasing
+ * angle when `anticlockwise`) become ≤ 90° Bézier segments.
+ */
+function pdfPathSink(ops) {
+  let cx = 0
+  let cy = 0
+  return {
+    moveTo(x, y) {
+      ops.push(moveTo(x, y))
+      cx = x
+      cy = y
+    },
+    lineTo(x, y) {
+      ops.push(lineTo(x, y))
+      cx = x
+      cy = y
+    },
+    quadraticCurveTo(qx, qy, x, y) {
+      const c1x = cx + (2 / 3) * (qx - cx)
+      const c1y = cy + (2 / 3) * (qy - cy)
+      const c2x = x + (2 / 3) * (qx - x)
+      const c2y = y + (2 / 3) * (qy - y)
+      ops.push(appendBezierCurve(c1x, c1y, c2x, c2y, x, y))
+      cx = x
+      cy = y
+    },
+    arc(x, y, r, a1, a2, anticlockwise) {
+      let d = a2 - a1
+      if (anticlockwise) {
+        while (d > 0) d -= Math.PI * 2
+        while (d <= -Math.PI * 2) d += Math.PI * 2
+      } else {
+        while (d < 0) d += Math.PI * 2
+        while (d >= Math.PI * 2) d -= Math.PI * 2
+        if (d === 0 && a2 !== a1) d = Math.PI * 2
+      }
+      const steps = Math.max(1, Math.ceil(Math.abs(d) / (Math.PI / 2)))
+      const step = d / steps
+      const k = (4 / 3) * Math.tan(Math.abs(step) / 4) * Math.sign(step)
+      let a = a1
+      const sx = x + r * Math.cos(a)
+      const sy = y + r * Math.sin(a)
+      if (Math.hypot(sx - cx, sy - cy) > 1e-9) ops.push(lineTo(sx, sy))
+      for (let i = 0; i < steps; i++) {
+        const b = a + step
+        const c1x = x + r * (Math.cos(a) - k * Math.sin(a))
+        const c1y = y + r * (Math.sin(a) + k * Math.cos(a))
+        const c2x = x + r * (Math.cos(b) + k * Math.sin(b))
+        const c2y = y + r * (Math.sin(b) - k * Math.cos(b))
+        const ex = x + r * Math.cos(b)
+        const ey = y + r * Math.sin(b)
+        ops.push(appendBezierCurve(c1x, c1y, c2x, c2y, ex, ey))
+        a = b
+        cx = ex
+        cy = ey
+      }
+    },
+  }
+}
+
 function drawAnnotations(doc, page, ann, effectiveRotation, font) {
   const ops = []
   const gsCache = new Map()
@@ -176,6 +243,20 @@ function drawAnnotations(doc, page, ann, effectiveRotation, font) {
         gsCache.set(key, name)
       }
       ops.push(setGraphicsState(name))
+    }
+    if (hasPressure(s)) {
+      // Pressure-sensitive pen: the same variable-width outline as on screen, filled.
+      const n = pts.length / 2
+      const xs = new Float64Array(n)
+      const ys = new Float64Array(n)
+      for (let i = 0; i < n; i++) {
+        xs[i] = pts[i * 2]
+        ys[i] = pts[i * 2 + 1]
+      }
+      ops.push(setFillingColor(rgb(r, g, b)))
+      traceVariableWidth(xs, ys, pressureWidths(s, Math.max(0.1, s.width || 1)), pdfPathSink(ops))
+      ops.push(closePath(), fill(), popGraphicsState())
+      continue
     }
     ops.push(setStrokingColor(rgb(r, g, b)), setLineWidth(Math.max(0.1, s.width || 1)), setLineCap(LineCapStyle.Round), setLineJoin(LineJoinStyle.Round))
     ops.push(moveTo(pts[0], pts[1]))

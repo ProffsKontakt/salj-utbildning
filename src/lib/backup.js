@@ -21,7 +21,7 @@
 // Blob, keeping peak memory close to the size of the library (an in-memory
 // `zip()` call would need roughly twice that, which matters on an iPad).
 import { Zip, ZipDeflate, ZipPassThrough, unzipSync, strToU8, strFromU8 } from 'fflate'
-import { db, TABLE_NAMES, updateScore } from '../db/db.js'
+import { db, TABLE_NAMES, CACHE_TABLE_NAMES, dropPageImages, updateScore } from '../db/db.js'
 
 export const BACKUP_APP = 'notstall'
 export const BACKUP_FORMAT = 1
@@ -323,10 +323,13 @@ export async function importBackup(file, mode = 'merge') {
 
   // Only the content tables take part – tombstones (pending cloud deletions) are
   // never restored from, nor wiped by, a backup.
-  const tables = TABLE_NAMES.map((name) => db.table(name))
+  const tables = [...TABLE_NAMES, ...CACHE_TABLE_NAMES].map((name) => db.table(name))
   await db.transaction('rw', tables, async () => {
     if (mode === 'replace') {
       for (const t of tables) await t.clear()
+    } else {
+      // The archive's bytes replace the local file: cached page images are stale.
+      for (const id of importedIds) await dropPageImages(id)
     }
     // In merge mode a link may point at a score that already lives here even if the
     // archive skipped it; keep those, drop links to scores that exist nowhere.

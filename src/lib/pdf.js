@@ -16,6 +16,9 @@ export const PDFJS_LOAD_OPTIONS = {
 
 export { pdfjs }
 
+/** Emits 'invalidate' ({ detail: { scoreId } }) when a cached document is dropped, so open viewers reload. */
+export const pdfEvents = new EventTarget()
+
 // One shared worker thread for every document. Passing `worker` to getDocument
 // means loadingTask.destroy() releases the document but keeps the worker alive.
 let sharedWorker = null
@@ -221,7 +224,13 @@ export function releaseScoreDocument(scoreId) {
 /** Drop a cached document (call after replacing the file bytes or deleting the score). */
 export function invalidateScoreDocument(scoreId) {
   const entry = cache.get(scoreId)
-  if (!entry) return
-  cache.delete(scoreId)
-  entry.promise.then(destroyPdfDocument).catch(() => {})
+  if (entry) {
+    cache.delete(scoreId)
+    entry.promise.then(destroyPdfDocument).catch(() => {})
+  }
+  try {
+    pdfEvents.dispatchEvent(new CustomEvent('invalidate', { detail: { scoreId } }))
+  } catch {
+    /* ignore */
+  }
 }

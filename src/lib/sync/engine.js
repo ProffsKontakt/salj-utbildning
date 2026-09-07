@@ -2,7 +2,12 @@
 // uploads) to the cloud, pulls remote changes since the last cursor, and
 // downloads files for scores kept offline. Last-write-wins per row by the
 // client `updatedAt`; rows are applied through applyRemote (never dirty).
-import { db, setSyncUserId, dbEvents, getSetting, setSetting, storeDownloadedFile, countUnsynced, removeDownload as dbRemoveDownload } from '../../db/db.js'
+//
+// Network policy: the cloud is contacted only to upload what changed here
+// (shortly after a local write, or when the connection returns) and to fetch
+// what the user asks for (sign-in, app start, "Synka nu", a download). There is
+// no periodic polling, and nothing runs while sync is suspended (on stage).
+import { db, setSyncUserId, dbEvents, getSetting, setSetting, storeDownloadedFile, countUnsynced, dropPageImages, removeDownload as dbRemoveDownload } from '../../db/db.js'
 import {
   PUSH_ORDER,
   PULL_ORDER,
@@ -27,6 +32,8 @@ const OVERLAP_MS = 5000 // re-read a little history: synced_at is a commit-time 
 const PAGE = 500
 const CHUNK = 200
 const THUMB_CONCURRENCY = 3
+const PUSH_DEBOUNCE_MS = 5000 // after a local write: let a burst of edits settle first
+const STATUS_THROTTLE_MS = 250 // progress updates re-render every consumer – coalesce them
 
 async function invalidateDoc(scoreId) {
   try {
@@ -40,18 +47,36 @@ async function invalidateDoc(scoreId) {
 export function createSyncEngine({ cloud, onStatus }) {
   let user = null
   let running = false
-  let queued = false
+  let queued = null // mode of a sync requested while one was running
   let timer = null
-  let interval = null
+  let timerMode = null
   let started = false
+  const suspenders = new Set() // tokens that currently pause automatic syncs
+  let deferredMode = null // mode of a sync that was due while suspended
   const downloading = new Set()
   const status = { phase: 'idle', lastSyncAt: 0, error: null, pending: 0, progress: null, downloading: [] }
 
-  const emit = () => onStatus?.({ ...status, downloading: [...downloading] })
-  const set = (patch) => {
-    Object.assign(status, patch)
-    emit()
+  let emitTimer = null
+  let lastEmit = 0
+  const emitNow = () => {
+    clearTimeout(emitTimer)
+    emitTimer = null
+    lastEmit = Date.now()
+    onStatus?.({ ...status, downloading: [...downloading] })
   }
+  // Progress-only changes are throttled; phase/error/download changes go out at once.
+  const emit = (urgent = true) => {
+    if (urgent) return emitNow()
+    if (emitTimer) return
+    const wait = Math.max(0, STATUS_THROTTLE_MS - (Date.now() - lastEmit))
+    emitTimer = setTimeout(emitNow, wait)
+  }
+  const set = (patch) => {
+    const keys = Object.keys(patch)
+    Object.assign(status, patch)
+    emit(!(keys.length === 1 && keys[0] === 'progress'))
+  }
+  const stronger = (a, b) => (a === 'full' || b === 'full' ? 'full' : 'push')
 
   async function refreshPending() {
     try {
@@ -62,27 +87,53 @@ export function createSyncEngine({ cloud, onStatus }) {
     emit()
   }
 
-  function schedule(delay = 1500) {
+  /**
+   * Run a sync after `delay` ms. `mode` 'push' uploads local changes only; 'full'
+   * also pulls remote changes and refreshes thumbnails/files. While suspended the
+   * request is remembered and runs when the last suspender releases.
+   */
+  function schedule(delay = PUSH_DEBOUNCE_MS, mode = 'push') {
     if (!user) return
+    if (suspenders.size) {
+      deferredMode = deferredMode ? stronger(deferredMode, mode) : mode
+      return
+    }
     clearTimeout(timer)
-    timer = setTimeout(() => sync('scheduled'), delay)
+    timerMode = timerMode ? stronger(timerMode, mode) : mode
+    timer = setTimeout(() => {
+      const m = timerMode || 'push'
+      timerMode = null
+      sync('scheduled', m)
+    }, delay)
   }
 
-  const onDirty = () => schedule(1500)
-  const onOnline = () => schedule(0)
-  const onVisible = () => {
-    if (document.visibilityState === 'visible') schedule(0)
+  /** Pause automatic syncs (e.g. on stage). Returns a release function. */
+  function suspend(token = {}) {
+    suspenders.add(token)
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+      deferredMode = deferredMode ? stronger(deferredMode, timerMode || 'push') : timerMode || 'push'
+      timerMode = null
+    }
+    return () => {
+      if (!suspenders.delete(token)) return
+      if (!suspenders.size && deferredMode) {
+        const m = deferredMode
+        deferredMode = null
+        schedule(m === 'full' ? 0 : 1500, m)
+      }
+    }
   }
+
+  const onDirty = () => schedule(PUSH_DEBOUNCE_MS, 'push')
+  const onOnline = () => schedule(0, 'push')
 
   function start() {
     if (started) return
     started = true
     dbEvents.addEventListener('dirty', onDirty)
     window.addEventListener('online', onOnline)
-    document.addEventListener('visibilitychange', onVisible)
-    interval = setInterval(() => {
-      if (document.visibilityState === 'visible') schedule(0)
-    }, 60_000)
   }
 
   function stop() {
@@ -90,9 +141,8 @@ export function createSyncEngine({ cloud, onStatus }) {
     started = false
     dbEvents.removeEventListener('dirty', onDirty)
     window.removeEventListener('online', onOnline)
-    document.removeEventListener('visibilitychange', onVisible)
-    clearInterval(interval)
     clearTimeout(timer)
+    clearTimeout(emitTimer)
   }
 
   function setUser(u) {
@@ -102,9 +152,12 @@ export function createSyncEngine({ cloud, onStatus }) {
       const last = 0
       set({ phase: 'idle', error: null, lastSyncAt: last })
       getSetting(LAST_KEY(user.id), 0).then((t) => set({ lastSyncAt: t || 0 }))
-      schedule(0)
+      // Sign-in / app start: fetch the account's library once.
+      schedule(0, 'full')
     } else {
       clearTimeout(timer)
+      timerMode = null
+      deferredMode = null
       set({ phase: 'idle', error: null, pending: 0, progress: null, lastSyncAt: 0 })
     }
   }
@@ -216,12 +269,13 @@ export function createSyncEngine({ cloud, onStatus }) {
     const remoteUpdated = toMs(r.updated_at)
 
     if (table === 'scores') {
-      await db.transaction('rw', db.scores, db.files, db.annotations, db.projectScores, async () => {
+      await db.transaction('rw', db.scores, db.files, db.annotations, db.projectScores, db.pageImages, db.pageImageBlobs, async () => {
         const local = await db.scores.get(r.id)
         if (deletedAt) {
           if (local && !(local.dirty && local.updatedAt > deletedAt)) {
             await db.scores.delete(r.id)
             await db.files.delete(r.id)
+            await dropPageImages(r.id)
             await db.annotations.where('scoreId').equals(r.id).delete()
             await db.projectScores.where('scoreId').equals(r.id).delete()
           }
@@ -371,6 +425,10 @@ export function createSyncEngine({ cloud, onStatus }) {
       const bytes = await cloud.downloadFile(filePath(user.id, scoreId))
       await storeDownloadedFile(scoreId, bytes, version)
       await invalidateDoc(scoreId)
+      // Pre-render the pages so the score opens instantly (also on stage).
+      import('../pageCache.js')
+        .then((m) => m.prepareScore(scoreId, m.PRIORITY.score))
+        .catch(() => {})
     } finally {
       downloading.delete(scoreId)
       emit()
@@ -388,10 +446,14 @@ export function createSyncEngine({ cloud, onStatus }) {
 
   // ── Orchestration ─────────────────────────────────────────────────────
 
-  async function sync(reason = 'manual') {
+  /**
+   * @param {string} reason  for logs
+   * @param {'push'|'full'} mode  'push' = upload local changes; 'full' = also pull and refresh
+   */
+  async function sync(reason = 'manual', mode = 'full') {
     if (!user) return
     if (running) {
-      queued = true
+      queued = queued ? stronger(queued, mode) : mode
       return
     }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -405,12 +467,14 @@ export function createSyncEngine({ cloud, onStatus }) {
     try {
       await pushTombstones(uid)
       await pushDirty(uid)
-      await pullAll(uid)
-      await fetchMissingThumbs(uid)
-      await refreshChangedFiles(uid)
+      if (mode === 'full') {
+        await pullAll(uid)
+        await fetchMissingThumbs(uid)
+        await refreshChangedFiles(uid)
+      }
       const t = Date.now()
-      await setSetting(LAST_KEY(uid), t)
-      set({ phase: 'idle', lastSyncAt: t, error: null, progress: null })
+      if (mode === 'full') await setSetting(LAST_KEY(uid), t)
+      set({ phase: 'idle', lastSyncAt: mode === 'full' ? t : status.lastSyncAt, error: null, progress: null })
     } catch (err) {
       const offline = typeof navigator !== 'undefined' && navigator.onLine === false
       set({ phase: offline ? 'offline' : 'error', error: offline ? null : err?.message || String(err), progress: null })
@@ -419,11 +483,12 @@ export function createSyncEngine({ cloud, onStatus }) {
       running = false
       await refreshPending()
       if (queued) {
-        queued = false
-        schedule(500)
+        const m = queued
+        queued = null
+        schedule(500, m)
       }
     }
   }
 
-  return { start, stop, setUser, sync, schedule, downloadScore, removeDownload, refreshPending, isDownloading: (id) => downloading.has(id), getStatus: () => ({ ...status, downloading: [...downloading] }) }
+  return { start, stop, setUser, sync, schedule, suspend, downloadScore, removeDownload, refreshPending, isDownloading: (id) => downloading.has(id), getStatus: () => ({ ...status, downloading: [...downloading] }) }
 }

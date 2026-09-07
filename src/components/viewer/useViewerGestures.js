@@ -5,6 +5,7 @@
 // handlers are used so the annotation layer's stopPropagation is honoured) and
 // attaches native touch/keyboard listeners itself.
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { touchBlocked } from '../../lib/penState.js'
 
 const SWIPE_MIN = 60
 const TAP_SLOP = 10
@@ -29,6 +30,7 @@ function isEditableTarget(t) {
  * @param {React.RefObject<HTMLElement>} ref  scroll container (the stage)
  * @param {object} o
  * @param {(pointerType: string) => boolean} o.enabledFor  whether tap/swipe/pinch apply for a pointer type
+ * @param {boolean} [o.drawing]  a drawing tool is active: fingers may pan and pinch but never turn pages
  * @param {boolean} o.tapToTurn
  * @param {() => void} o.onPrev
  * @param {() => void} o.onNext
@@ -61,6 +63,8 @@ export function useViewerGestures(ref, o) {
   const onPointerDown = useCallback(
     (e) => {
       const opts = optsRef.current
+      // The resting hand while (or right after) the pen draws is never a gesture.
+      if (e.pointerType === 'touch' && touchBlocked()) return
       if (!opts.enabledFor(e.pointerType)) return
       if (e.pointerType === 'mouse' && e.button !== 0) return
       if (!e.isPrimary) return
@@ -104,6 +108,12 @@ export function useViewerGestures(ref, o) {
       const opts = optsRef.current
       const el = ref.current
       if (!el || p.panned) return
+      // While a tool is active, taps and swipes never turn the page (a stray finger
+      // must not flip the score mid-stroke); panning above still works.
+      if (opts.drawing) {
+        lastTapRef.current = null
+        return
+      }
       const dx = e.clientX - p.x0
       const dy = e.clientY - p.y0
       const dt = performance.now() - p.t0
@@ -159,6 +169,7 @@ export function useViewerGestures(ref, o) {
     }
     const onStart = (e) => {
       const opts = optsRef.current
+      if (touchBlocked()) return
       if (e.touches.length !== 2 || !opts.enabledFor('touch') || !opts.onZoomCommit) return
       e.preventDefault()
       pointerRef.current = null

@@ -235,6 +235,7 @@ function PageManagerInner({ scoreId }) {
           ) : (
             <PageGrid
               doc={doc}
+              score={score}
               order={editor.order}
               rotations={editor.rotations}
               scrollRoot={scrollRef}

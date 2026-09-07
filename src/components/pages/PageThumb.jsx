@@ -1,20 +1,25 @@
 // Memoised page thumbnail for the page manager. Receives only primitive props
-// (plus the pdf.js document) so drag-and-drop re-renders of the surrounding
-// tile never touch the canvas. Renders lazily: the PdfPage is mounted only
-// while the tile is inside (or near) the scroll container's viewport and is
-// unmounted again when it scrolls far away, so a 300-page score keeps a small
-// canvas footprint.
-import { memo, useEffect, useRef, useState } from 'react'
+// (plus the score record and the pdf.js document) so drag-and-drop re-renders of
+// the surrounding tile never touch the image. Renders lazily: mounted only while
+// the tile is inside (or near) the scroll container's viewport and unmounted
+// again when it scrolls far away, so a 300-page score keeps a small footprint.
+//
+// The small cached page image (lib/pageCache.js) is used whenever it exists –
+// no pdf.js decode per tile; the PDF is only drawn for pages without one.
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { PdfPage } from '../PdfPage.jsx'
 import { getPageBaseSize } from '../../lib/pdf.js'
+import { usePageImage, PRIORITY } from '../../lib/pageCache.js'
+import { baseSizeFromMeta } from '../../lib/viewport.js'
 import { cn } from '../ui/cn.js'
 
-// How far outside the viewport a tile may be and still keep its canvas.
+// How far outside the viewport a tile may be and still keep its image.
 const NEAR_MARGIN = '720px 0px 720px 0px'
 
 /**
  * @param {object} p
  * @param {object|null} p.doc          pdf.js document (null while loading)
+ * @param {object|null} [p.score]      score record (for the cached page image)
  * @param {number} p.pageIndex         source page index
  * @param {number} p.rotation          extra rotation 0|90|180|270
  * @param {number} p.width             box width in CSS px
@@ -23,7 +28,7 @@ const NEAR_MARGIN = '720px 0px 720px 0px'
  * @param {boolean} [p.lazy=true]      false = render immediately (drag overlay)
  * @param {string} [p.className]
  */
-export const PageThumb = memo(function PageThumb({ doc, pageIndex, rotation = 0, width, height, root, lazy = true, className }) {
+export const PageThumb = memo(function PageThumb({ doc, score = null, pageIndex, rotation = 0, width, height, root, lazy = true, className }) {
   const boxRef = useRef(null)
   const [near, setNear] = useState(!lazy)
   const [base, setBase] = useState(null) // { forDoc, forIndex, forRotation, w, h }
@@ -47,9 +52,12 @@ export const PageThumb = memo(function PageThumb({ doc, pageIndex, rotation = 0,
     return () => io.disconnect()
   }, [lazy, root])
 
-  // Unrotated-at-scale-1 size of the page, needed to fit it inside the box.
+  const { raster } = usePageImage(score, pageIndex, { thumb: true, priority: PRIORITY.score, enabled: near && !!score })
+  const rasterBase = useMemo(() => (raster ? baseSizeFromMeta(raster, rotation) : null), [raster, rotation])
+
+  // Unrotated-at-scale-1 size of the page, needed to fit it inside the box (pdf.js path).
   useEffect(() => {
-    if (!near || !doc) return
+    if (!near || !doc || raster) return
     let alive = true
     doc
       .getPage(pageIndex + 1)
@@ -64,10 +72,12 @@ export const PageThumb = memo(function PageThumb({ doc, pageIndex, rotation = 0,
     return () => {
       alive = false
     }
-  }, [near, doc, pageIndex, rotation])
+  }, [near, doc, raster, pageIndex, rotation])
 
   const valid = base && base.forDoc === doc && base.forIndex === pageIndex && base.forRotation === rotation && base.w > 0 && base.h > 0
-  const scale = valid && width && height ? Math.min(width / base.w, height / base.h) : null
+  const size = rasterBase && rasterBase.width > 0 ? rasterBase : valid ? { width: base.w, height: base.h } : null
+  const scale = size && width && height ? Math.min(width / size.width, height / size.height) : null
+  const ready = near && scale && (raster || doc)
 
   return (
     <div
@@ -76,8 +86,8 @@ export const PageThumb = memo(function PageThumb({ doc, pageIndex, rotation = 0,
       style={{ width, height }}
       aria-hidden="true"
     >
-      {near && doc && scale ? (
-        <PdfPage doc={doc} pageIndex={pageIndex} scale={scale} rotation={rotation} quality="screen" className="rounded-[3px]" />
+      {ready ? (
+        <PdfPage doc={raster ? null : doc} raster={raster} pageIndex={pageIndex} scale={scale} rotation={rotation} quality="thumb" className="rounded-[3px]" />
       ) : (
         <div
           className={cn('paper rounded-[3px]', near && 'animate-pulse-soft')}

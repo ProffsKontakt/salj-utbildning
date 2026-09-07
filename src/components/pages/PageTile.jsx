@@ -37,6 +37,7 @@ function TileButton({ label, onClick, disabled, danger = false, testId, children
 
 const TileBody = memo(function TileBody({
   doc,
+  score,
   srcIndex,
   position,
   total,
@@ -57,7 +58,7 @@ const TileBody = memo(function TileBody({
   return (
     <>
       <div className="relative rounded-xl bg-ink-950/50" style={{ padding: TILE_PADDING, paddingBottom: 0 }}>
-        <PageThumb doc={doc} pageIndex={srcIndex} rotation={rotation} width={thumbW} height={thumbH} root={scrollRoot} className="mx-auto rounded-lg" />
+        <PageThumb doc={doc} score={score} pageIndex={srcIndex} rotation={rotation} width={thumbW} height={thumbH} root={scrollRoot} className="mx-auto rounded-lg" />
 
         <span className="pointer-events-none absolute left-3 top-3 rounded-full bg-ink-950/85 px-2.5 py-1 text-xs font-semibold tabular-nums text-ivory-50 shadow" aria-hidden="true">
           {position + 1}
@@ -105,6 +106,7 @@ const TileBody = memo(function TileBody({
 /**
  * @param {object} p
  * @param {object|null} p.doc
+ * @param {object|null} [p.score]     score record (cached page images)
  * @param {number} p.srcIndex        source page index (0-based)
  * @param {number} p.position        display index (0-based)
  * @param {number} p.total           number of displayed pages
@@ -118,7 +120,7 @@ const TileBody = memo(function TileBody({
  * @param {boolean} p.canRemove
  * @param {boolean} [p.disabled]
  */
-export const PageTile = memo(function PageTile({ doc, srcIndex, position, total, rotation, width, scrollRoot, onRotate, onMove, onRemove, onKeyDown, canRemove, disabled = false }) {
+export const PageTile = memo(function PageTile({ doc, score = null, srcIndex, position, total, rotation, width, scrollRoot, onRotate, onMove, onRemove, onKeyDown, canRemove, disabled = false }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: tileId(srcIndex),
     disabled,
@@ -145,6 +147,7 @@ export const PageTile = memo(function PageTile({ doc, srcIndex, position, total,
     >
       <TileBody
         doc={doc}
+        score={score}
         srcIndex={srcIndex}
         position={position}
         total={total}
@@ -167,13 +170,13 @@ export const PageTile = memo(function PageTile({ doc, srcIndex, position, total,
 })
 
 /** Lightweight card shown under the pointer while dragging. */
-export function TilePreview({ doc, srcIndex, position, rotation, width }) {
+export function TilePreview({ doc, score = null, srcIndex, position, rotation, width }) {
   const thumbW = Math.max(0, width - TILE_PADDING * 2)
   const thumbH = Math.round(thumbW * THUMB_ASPECT)
   return (
     <div className="rounded-2xl bg-ink-800 shadow-stage ring-1 ring-gold-400/60" style={{ width }} aria-hidden="true">
       <div className="relative rounded-xl bg-ink-950/50" style={{ padding: TILE_PADDING }}>
-        <PageThumb doc={doc} pageIndex={srcIndex} rotation={rotation} width={thumbW} height={thumbH} lazy={false} className="mx-auto rounded-lg" />
+        <PageThumb doc={doc} score={score} pageIndex={srcIndex} rotation={rotation} width={thumbW} height={thumbH} lazy={false} className="mx-auto rounded-lg" />
         <span className="absolute left-3 top-3 rounded-full bg-gold-500 px-2.5 py-1 text-xs font-semibold tabular-nums text-ink-950 shadow">{position + 1}</span>
       </div>
       <div className="px-3 py-2 text-center text-xs text-ivory-300">Sida {srcIndex + 1} i filen</div>
