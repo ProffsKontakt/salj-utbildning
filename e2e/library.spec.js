@@ -39,7 +39,7 @@ test.describe('Bibliotek & import', () => {
     // delete via card menu
     const target = page.getByTestId('score-card').filter({ hasText: 'Laudate Dominum' })
     await target.getByTestId('score-menu').click()
-    await page.getByRole('menuitem', { name: /Ta bort/ }).click()
+    await page.getByRole('menuitem', { name: /Ta bort(?! nedladdning)/ }).click()
     await page.getByRole('dialog').getByRole('button', { name: /Ta bort/ }).click()
     await expect(page.getByTestId('score-card')).toHaveCount(1)
     expect(await readTable(page, 'files')).toHaveLength(1)

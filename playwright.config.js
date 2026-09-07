@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 const DEV = 'http://localhost:4174'
 const PROD = 'http://localhost:4173'
+const CLOUD = 'http://localhost:4175' // dev server with the in-memory fake cloud
 
 export default defineConfig({
   testDir: './e2e',
@@ -22,7 +23,7 @@ export default defineConfig({
   projects: [
     {
       name: 'dev',
-      testIgnore: [/mobile\.spec/, /prod-smoke\.spec/],
+      testIgnore: [/mobile\.spec/, /prod-smoke\.spec/, /cloud\.spec/],
       use: { ...devices['Desktop Chrome'], baseURL: DEV },
     },
     {
@@ -35,6 +36,11 @@ export default defineConfig({
       testMatch: /prod-smoke\.spec/,
       use: { ...devices['Desktop Chrome'], baseURL: PROD },
     },
+    {
+      name: 'cloud',
+      testMatch: /cloud\.spec/,
+      use: { ...devices['Desktop Chrome'], baseURL: CLOUD },
+    },
   ],
   // E2E_DEV_ONLY=1 skips the production build/preview server (faster local iteration).
   webServer: [
@@ -42,6 +48,14 @@ export default defineConfig({
       // `npm run dev` (not bare `npx vite`) so predev copies the pdf.js assets to public/pdfjs.
       command: 'npm run dev -- --port 4174 --strictPort',
       url: DEV,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      // Second dev server with the in-memory fake cloud (see scripts/fakeCloudPlugin.js).
+      command: 'npm run dev -- --port 4175 --strictPort',
+      url: CLOUD,
+      env: { NOTSTALL_FAKE_CLOUD: '1' },
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },

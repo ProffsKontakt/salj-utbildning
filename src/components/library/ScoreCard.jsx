@@ -1,43 +1,85 @@
 import { memo } from 'react'
-import { MoreVertical, Music, BookOpen, ListOrdered, FolderPlus, Pencil, Trash2 } from 'lucide-react'
+import { MoreVertical, Music, BookOpen, ListOrdered, FolderPlus, Pencil, Trash2, Cloud, CloudDownload, Smartphone } from 'lucide-react'
 import { useObjectUrl } from '../../hooks/useObjectUrl.js'
 import { pluralize } from '../../lib/format.js'
-import { IconButton, Menu } from '../ui/index.js'
+import { IconButton, Menu, Spinner } from '../ui/index.js'
 import { cn } from '../ui/cn.js'
 
 const MAX_CHIPS = 2
+const BADGE = 'absolute left-2 top-2 z-[1] flex items-center justify-center rounded-full bg-ink-950/80 text-ivory-100 shadow backdrop-blur-sm'
 
 /**
  * One score in the library grid. The card body is a button that opens the
  * viewer; the kebab menu sits over the thumbnail so the two never nest.
+ *
+ * Cloud state: a score with `ownerId` belongs to the signed-in account. It is
+ * "nedladdad" when its PDF bytes are on this device (`downloaded`), otherwise
+ * only metadata + thumbnail are here ("i molnet"). `ownerId === null` means
+ * the score exists only on this device.
  */
-export const ScoreCard = memo(function ScoreCard({ score, projects = [], onOpen, onPages, onAddToProject, onEdit, onDelete }) {
+export const ScoreCard = memo(function ScoreCard({
+  score,
+  projects = [],
+  downloaded = true,
+  downloading = false,
+  signedIn = false,
+  online = true,
+  onOpen,
+  onPages,
+  onAddToProject,
+  onEdit,
+  onDelete,
+  onDownload,
+  onRemoveDownload,
+}) {
   // Keyed on the record, not the buffer: live queries clone `thumb` on every refresh.
   const thumbUrl = useObjectUrl(score.thumb, score.thumbMime || 'image/jpeg', `${score.id}:${score.updatedAt}:${score.thumb?.byteLength ?? 0}`)
   const pageCount = score.pageOrder?.length ?? score.pageCount ?? 0
   const extraChips = projects.length - MAX_CHIPS
+  const cloud = !!score.ownerId
+  const cloudOnly = cloud && !downloaded
+  const deviceOnly = !cloud && signedIn
+
+  const openLabel = `Öppna ${score.title}${downloading ? ' (laddar ner)' : cloudOnly ? ' (i molnet, inte nedladdad)' : deviceOnly ? ' (bara på den här enheten)' : ''}`
 
   return (
     <li
       data-testid="score-card"
       data-score-id={score.id}
+      data-downloaded={downloaded ? 'true' : 'false'}
+      data-cloud={cloud ? 'true' : 'false'}
       className="group relative flex flex-col rounded-2xl bg-ink-800/55 p-2.5 hairline transition-[background-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-ink-700/70 hover:shadow-stage animate-fade-in"
     >
-      <button
-        type="button"
-        onClick={() => onOpen(score)}
-        className="flex w-full min-w-0 flex-col rounded-xl text-left focus-visible:outline-2 focus-visible:outline-gold-400"
-        aria-label={`Öppna ${score.title}`}
-      >
+      <button type="button" onClick={() => onOpen(score)} className="flex w-full min-w-0 flex-col rounded-xl text-left focus-visible:outline-2 focus-visible:outline-gold-400" aria-label={openLabel}>
         <div className="paper relative aspect-[3/4] w-full overflow-hidden rounded-lg">
           {thumbUrl ? (
-            <img src={thumbUrl} alt="" className="h-full w-full object-cover object-top transition-transform duration-300 group-hover:scale-[1.02]" draggable={false} loading="lazy" />
+            <img
+              src={thumbUrl}
+              alt=""
+              className={cn('h-full w-full object-cover object-top transition-transform duration-300 group-hover:scale-[1.02]', cloudOnly && 'opacity-80')}
+              draggable={false}
+              loading="lazy"
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-ink-400" aria-hidden="true">
               <Music className="size-10 opacity-60" />
             </div>
           )}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/25 to-transparent" aria-hidden="true" />
+          {downloading ? (
+            <span className={cn(BADGE, 'size-7 text-gold-300')} title="Laddar ner…" data-testid="score-badge-downloading" aria-hidden="true">
+              <Spinner className="size-4" />
+            </span>
+          ) : cloudOnly ? (
+            <span className={cn(BADGE, 'size-7')} title="I molnet – inte nedladdad" data-testid="score-badge-cloud" aria-hidden="true">
+              <Cloud className="size-4" />
+            </span>
+          ) : deviceOnly ? (
+            <span className={cn(BADGE, 'gap-1 px-2 py-0.5 text-[11px] font-medium text-ivory-200')} title="Finns bara på den här enheten" data-testid="score-badge-device" aria-hidden="true">
+              <Smartphone className="size-3" />
+              Bara här
+            </span>
+          ) : null}
         </div>
         <div className="mt-2.5 min-w-0 px-0.5 pb-0.5">
           <h3 className="line-clamp-2 font-display text-[19px] leading-[1.15] text-ivory-50" title={score.title}>
@@ -79,6 +121,18 @@ export const ScoreCard = memo(function ScoreCard({ score, projects = [], onOpen,
         )}
         items={[
           { key: 'open', label: 'Öppna', icon: BookOpen, onSelect: () => onOpen(score) },
+          cloudOnly
+            ? {
+                key: 'download',
+                label: downloading ? 'Laddar ner…' : 'Ladda ner',
+                icon: CloudDownload,
+                disabled: !online || downloading,
+                hint: !online ? 'Offline' : undefined,
+                testId: 'download-score',
+                onSelect: () => onDownload?.(score),
+              }
+            : null,
+          cloud && downloaded ? { key: 'removeDownload', label: 'Ta bort nedladdning', icon: Cloud, testId: 'remove-download', onSelect: () => onRemoveDownload?.(score) } : null,
           { key: 'pages', label: 'Ordna sidor', icon: ListOrdered, onSelect: () => onPages(score) },
           { key: 'project', label: 'Lägg till i projekt', icon: FolderPlus, onSelect: () => onAddToProject(score) },
           { key: 'edit', label: 'Redigera info', icon: Pencil, onSelect: () => onEdit(score) },

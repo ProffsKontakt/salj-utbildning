@@ -139,3 +139,12 @@ npm run icons      # regenerera PWA-ikoner från SVG
 `e2e/` innehåller Playwright-tester som kör mot dev-servern (för att kunna läsa IndexedDB via
 appens moduler) och ett rökprov mot produktionsbygget (`vite preview`). Test-id:n
 (`data-testid`) är en del av UI-kontraktet – ta inte bort dem.
+
+## Konto och molnsynk
+
+Se `docs/CLOUD.md` för uppsättning och synkmodell. Kort: `src/lib/sync/engine.js` pushar
+`dirty`-rader och tombstones, pullar sedan förändringar sedan senaste `synced_at`, med
+last-write-wins per rad. `SyncProvider` (kontext `useSync()`) äger inloggningsstatus och
+motorn; `AdoptLocalDialog` erbjuder uppladdning av lokala noter vid första inloggningen.
+Lokalt schema v3 lägger till `ownerId`, `dirty`, fil-/tumnagelversioner och tabellen
+`tombstones`. En `files`-rad betyder »nedladdad«; utan den är stycket bara i molnet.

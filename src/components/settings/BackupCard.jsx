@@ -75,7 +75,7 @@ export function BackupCard() {
     try {
       const { blob, counts, skipped } = await exportBackup({ onProgress: setProgress })
       const name = backupFileName(todayIso())
-      if (skipped.length) toast.info(`${pluralize(skipped.length, 'stycke', 'stycken')} saknade PDF-fil och togs inte med: ${skipped.slice(0, 3).join(', ')}${skipped.length > 3 ? '…' : ''}`, { duration: 7000 })
+      if (skipped.length) toast.info(`${pluralize(skipped.length, 'stycke är inte nedladdat', 'stycken är inte nedladdade')} och togs inte med: ${skipped.slice(0, 3).join(', ')}${skipped.length > 3 ? '…' : ''}`, { duration: 7000 })
       if (counts.scores === 0 && counts.projects === 0) toast.info('Biblioteket är tomt – kopian innehåller bara inställningar.')
       // The share sheet on iOS needs a fresh user gesture; if packing took long
       // the original tap has expired, so hand the user a Save button instead.
@@ -138,7 +138,7 @@ export function BackupCard() {
   const percent = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0
 
   return (
-    <SettingsCard icon={Archive} title="Säkerhetskopia" description="Hela biblioteket – noter, anteckningar, projekt och inställningar – som en zip-fil du kan spara i Filer, iCloud eller på en dator.">
+    <SettingsCard icon={Archive} title="Säkerhetskopia" description="Hela biblioteket – nedladdade noter, anteckningar, projekt och inställningar – som en zip-fil du kan spara i Filer, iCloud eller på en dator. Stycken som bara finns i molnet tas inte med.">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
         <Button onClick={doExport} loading={exporting} data-testid="export-backup" className="sm:min-w-[15.5rem] sm:flex-1">
           {!exporting ? <ArrowDownToLine className="size-4" aria-hidden="true" /> : null}
@@ -178,7 +178,8 @@ export function BackupCard() {
       ) : null}
 
       <p className="mt-4 text-xs leading-relaxed text-ivory-500">
-        Ta en kopia innan du byter enhet, raderar appen eller rensar webbläsardata. På iPhone och iPad öppnas delningsmenyn – välj ”Spara i Filer”.
+        Ta en kopia innan du byter enhet, raderar appen eller rensar webbläsardata. På iPhone och iPad öppnas delningsmenyn – välj ”Spara i Filer”. Inlästa stycken hamnar
+        ”bara här” på enheten tills du laddar upp dem till ditt konto.
       </p>
 
       <Dialog

@@ -5,9 +5,25 @@ const GRID = 'grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:g
 
 /**
  * Responsive grid of score cards. Pass `scores = null` to render skeletons.
- * `projectsByScore` is a Map<scoreId, project[]>.
+ * `projectsByScore` is a Map<scoreId, project[]>; `downloadedIds` / `downloadingIds`
+ * are Sets of score ids (a missing set means everything is on the device).
  */
-export function ScoreGrid({ scores, projectsByScore, onOpen, onPages, onAddToProject, onEdit, onDelete, skeletonCount = 8 }) {
+export function ScoreGrid({
+  scores,
+  projectsByScore,
+  downloadedIds,
+  downloadingIds,
+  signedIn = false,
+  online = true,
+  onOpen,
+  onPages,
+  onAddToProject,
+  onEdit,
+  onDelete,
+  onDownload,
+  onRemoveDownload,
+  skeletonCount = 8,
+}) {
   if (scores === null) {
     return (
       <ul className={GRID} aria-busy="true" aria-label="Läser in noter">
@@ -24,11 +40,17 @@ export function ScoreGrid({ scores, projectsByScore, onOpen, onPages, onAddToPro
           key={score.id}
           score={score}
           projects={projectsByScore?.get(score.id) || EMPTY}
+          downloaded={!downloadedIds || downloadedIds.has(score.id)}
+          downloading={!!downloadingIds?.has(score.id)}
+          signedIn={signedIn}
+          online={online}
           onOpen={onOpen}
           onPages={onPages}
           onAddToProject={onAddToProject}
           onEdit={onEdit}
           onDelete={onDelete}
+          onDownload={onDownload}
+          onRemoveDownload={onRemoveDownload}
         />
       ))}
     </ul>

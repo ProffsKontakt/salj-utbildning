@@ -1,13 +1,14 @@
 import { useEffect } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { applyPendingReload } from '../pwa.js'
-import { Library, CalendarDays, Settings } from 'lucide-react'
+import { Library, CalendarDays, Settings, UserRound } from 'lucide-react'
 import { cn } from './ui/cn.js'
 import { Wordmark } from './Logo.jsx'
 
 const NAV = [
   { to: '/', label: 'Bibliotek', icon: Library, end: true },
   { to: '/projekt', label: 'Projekt', icon: CalendarDays },
+  { to: '/konto', label: 'Konto', icon: UserRound },
   { to: '/installningar', label: 'Inställningar', icon: Settings },
 ]
 
@@ -43,7 +44,7 @@ export function Shell() {
           ))}
         </nav>
         <div className="mt-auto px-3 text-xs leading-relaxed text-ivory-500">
-          Dina noter sparas lokalt på den här enheten.
+          Noterna sparas på den här enheten – och i ditt konto när du är inloggad.
         </div>
       </aside>
 
@@ -57,7 +58,7 @@ export function Shell() {
         className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-ivory-50/8 bg-ink-950/85 backdrop-blur md:hidden"
         aria-label="Huvudmeny"
       >
-        <div className="grid h-16 grid-cols-3">
+        <div className="grid h-16 grid-cols-4">
           {NAV.map((n) => (
             <NavLink
               key={n.to}

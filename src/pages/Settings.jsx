@@ -1,4 +1,5 @@
 import { PageHeader } from '../components/PageHeader.jsx'
+import { AccountSummaryCard } from '../components/settings/AccountSummaryCard.jsx'
 import { ReadingCard } from '../components/settings/ReadingCard.jsx'
 import { StorageCard } from '../components/settings/StorageCard.jsx'
 import { InstallCard } from '../components/settings/InstallCard.jsx'
@@ -10,9 +11,10 @@ import { AboutCard } from '../components/settings/AboutCard.jsx'
 export default function Settings() {
   return (
     <div data-testid="settings-page">
-      <PageHeader eyebrow="Inställningar" title="Notställ" description="Anpassa läsningen, håll koll på lagringen och ta säkerhetskopior av ditt bibliotek." />
+      <PageHeader eyebrow="Inställningar" title="Notställ" description="Konto, läsning, lagring och säkerhetskopior av ditt bibliotek." />
       <div className="mx-auto mt-6 grid max-w-6xl gap-4 px-4 pb-4 sm:px-6 md:px-10 xl:grid-cols-2 xl:items-start">
         <div className="flex flex-col gap-4">
+          <AccountSummaryCard />
           <ReadingCard />
           <StorageCard />
           <InstallCard />

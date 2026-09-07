@@ -5,10 +5,13 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { X, Pen, BookOpen, CalendarDays, Music } from 'lucide-react'
 import { getProject, getProjectSetlist } from '../db/db.js'
 import { usePdfDocument } from '../hooks/usePdfDocument.js'
+import { useOfflineFile } from '../hooks/useOfflineFile.js'
+import { useSync } from '../lib/sync/useSync.js'
 import { useSetting } from '../hooks/useSetting.js'
 import { useWakeLock } from '../hooks/useWakeLock.js'
 import { IconButton, Button, EmptyState, Spinner, TopBar, useToast, cn } from '../components/ui/index.js'
 import { ScoreStage } from '../components/viewer/ScoreStage.jsx'
+import { DownloadProgress } from '../components/viewer/DownloadNeeded.jsx'
 import { AnnotationToolbar } from '../components/viewer/AnnotationToolbar.jsx'
 import { PageNav } from '../components/viewer/PageNav.jsx'
 import { useToolSettings } from '../components/viewer/useToolSettings.js'
@@ -24,6 +27,8 @@ export default function Performance() {
 
 function PerformanceInner({ projectId }) {
   const navigate = useNavigate()
+  const toast = useToast()
+  const sync = useSync()
   const [searchParams] = useSearchParams()
   const project = useLiveQuery(() => getProject(projectId), [projectId], null)
   const setlist = useLiveQuery(() => getProjectSetlist(projectId), [projectId], null)
@@ -59,8 +64,20 @@ function PerformanceInner({ projectId }) {
     for (let i = idx + 1; i < total; i++) if (sequence[i].scoreId !== cur.scoreId) return sequence[i].scoreId
     return null
   }, [cur, idx, total, sequence])
-  const { doc, error: docError, loading: docLoading } = usePdfDocument(cur?.scoreId ?? null)
-  usePdfDocument(nextScoreId)
+  const nextStart = nextScoreId ? (starts.get(nextScoreId) ?? null) : null
+
+  // Cloud-only scores: the current one is fetched on demand when reached (whatever the
+  // autoDownload setting says); the next one is prefetched only when the setting allows it.
+  const onDownloadError = useCallback((message) => toast.error(message), [toast])
+  const offline = useOfflineFile(cur?.scoreId ?? null, { auto: true, onError: onDownloadError })
+  const nextOffline = useOfflineFile(nextScoreId)
+  const cloudOnly = !!cur && !!score && offline.cloudOnly
+  const canOpen = !!cur && !offline.loading && !offline.cloudOnly
+  const { doc, error: docError, loading: docLoading } = usePdfDocument(canOpen ? cur.scoreId : null, offline.version)
+  usePdfDocument(nextScoreId && nextOffline.ready ? nextScoreId : null, nextOffline.version)
+  // Online and signed in: the download starts right away – show progress rather than flashing the message.
+  const awaitingDownload = sync.online && !offline.error && (sync.authLoading || (sync.cloudReady && !!sync.user))
+  const unavailableMessage = !sync.online ? 'Inte nedladdad – hoppa över' : !sync.user ? 'Logga in för att ladda ner stycket' : offline.error || 'Inte nedladdad – hoppa över'
 
   // ── Settings & tools ─────────────────────────────────────────────────
   const [keepAwake] = useSetting('keepAwake', true)
@@ -78,7 +95,6 @@ function PerformanceInner({ projectId }) {
     setLastTool(t)
   }, [])
   const [zoom, setZoom] = useState(1)
-  const toast = useToast()
   const onSaveError = useCallback(() => toast.error('Anteckningen kunde inte sparas. Försök igen.'), [toast])
   const editor = useAnnotationEditor(score?.id ?? null, score && cur ? (score.pageOrder || [])[cur.displayIndex] ?? null : null, { onSaveError })
 
@@ -112,7 +128,7 @@ function PerformanceInner({ projectId }) {
     const t = setTimeout(() => setTitleShownFor(curScoreId), TITLE_MS)
     return () => clearTimeout(t)
   }, [curScoreId])
-  const titleVisible = !!curScoreId && titleShownFor !== curScoreId
+  const titleVisible = !!curScoreId && titleShownFor !== curScoreId && !cloudOnly
 
   // ── Auto-hiding chrome in read mode ──────────────────────────────────
   const [chrome, setChrome] = useState({ hidden: false, shownAt: 0 })
@@ -208,9 +224,45 @@ function PerformanceInner({ projectId }) {
 
       {/* Stage */}
       <div className="relative min-h-0 flex-1">
-        {docLoading && !docError ? (
+        {(cur && offline.loading) || (docLoading && !docError) ? (
           <div className="absolute inset-0 flex items-center justify-center text-gold-300" role="status" aria-label="Laddar noter">
             <Spinner className="size-9" />
+          </div>
+        ) : null}
+        {cloudOnly ? (
+          <div className="absolute inset-0 flex items-center justify-center px-6" onPointerDown={showChrome}>
+            <div
+              className="w-full max-w-md rounded-3xl bg-ink-900/90 px-6 py-6 text-center shadow-stage backdrop-blur animate-fade-in"
+              data-testid="performance-download"
+              data-state={offline.downloading || awaitingDownload ? 'downloading' : 'unavailable'}
+            >
+              <div className="text-xs font-medium uppercase tracking-[0.18em] text-gold-400">
+                Stycke {scoreNumber} av {scoreCount}
+              </div>
+              <div className="mt-1 font-display text-3xl leading-tight text-ivory-50">{score.title}</div>
+              {score.composer ? <div className="mt-1 text-sm text-ivory-300">{score.composer}</div> : null}
+              {offline.downloading || awaitingDownload ? (
+                <DownloadProgress className="mt-4" />
+              ) : (
+                <>
+                  <p className="mt-3 text-[15px] leading-relaxed text-ivory-300" role="status" data-testid="download-skipped">
+                    {unavailableMessage}
+                  </p>
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                    {sync.online && sync.user ? (
+                      <Button onClick={() => offline.download()} data-testid="download-retry">
+                        Försök igen
+                      </Button>
+                    ) : null}
+                    {nextStart != null ? (
+                      <Button variant="secondary" onClick={() => goTo(nextStart)} data-testid="performance-skip">
+                        Hoppa över
+                      </Button>
+                    ) : null}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         ) : null}
         {docError ? (

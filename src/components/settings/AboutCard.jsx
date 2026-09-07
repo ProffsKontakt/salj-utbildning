@@ -16,7 +16,8 @@ export function AboutCard() {
   return (
     <SettingsCard icon={Info} title="Om" description={`Notställ ${APP_VERSION}`}>
       <p className="text-[13px] leading-relaxed text-ivory-300">
-        Dina noter lagras endast på den här enheten. Notställ är byggt för sångare som vill skanna, ordna, anteckna och framföra från skärmen – utan konto och utan moln.
+        Notställ är byggt för sångare som vill skanna, ordna, anteckna och framföra från skärmen. Allt fungerar utan konto – dina noter sparas då bara på den här enheten. Med ett konto
+        synkas bibliotek, anteckningar och projekt mellan dina enheter, och du väljer själv vad som ska laddas ner för offlinebruk.
       </p>
       <div className="mt-4 rounded-xl bg-ink-800 p-3.5">
         <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-ivory-400">

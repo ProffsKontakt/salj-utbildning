@@ -3,15 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { BookOpen, Pen, LayoutGrid, NotebookPen, MoreVertical, ListOrdered, Info, FolderPlus, FileDown, Trash2, Library, Music } from 'lucide-react'
+import { BookOpen, Pen, LayoutGrid, NotebookPen, MoreVertical, ListOrdered, Info, FolderPlus, FileDown, Trash2, Library, Music, Cloud } from 'lucide-react'
 import { db, deleteScore, getSetting, setSetting, touchScoreOpened, updateScore } from '../db/db.js'
 import { invalidateScoreDocument } from '../lib/pdf.js'
 import { usePdfDocument } from '../hooks/usePdfDocument.js'
+import { useOfflineFile } from '../hooks/useOfflineFile.js'
+import { useSync } from '../lib/sync/useSync.js'
 import { useSetting } from '../hooks/useSetting.js'
 import { useWakeLock } from '../hooks/useWakeLock.js'
 import { useMediaQuery } from '../hooks/useMediaQuery.js'
 import { TopBar, IconButton, Button, ConfirmDialog, EmptyState, Menu, Spinner, useToast, cn } from '../components/ui/index.js'
 import { ScoreStage } from '../components/viewer/ScoreStage.jsx'
+import { DownloadNeeded } from '../components/viewer/DownloadNeeded.jsx'
 import { AnnotationToolbar } from '../components/viewer/AnnotationToolbar.jsx'
 import { PageNav } from '../components/viewer/PageNav.jsx'
 import { ThumbStrip } from '../components/viewer/ThumbStrip.jsx'
@@ -46,9 +49,18 @@ function ScoreViewerInner({ scoreId }) {
   const missing = score === undefined
   const loadingScore = score === null
 
-  // Reload the document when the page manager replaced the file bytes.
-  const version = score ? `${score.pageCount}:${score.fileSize || 0}` : 0
-  const { doc, error: docError, loading: docLoading } = usePdfDocument(score ? scoreId : null, version)
+  // Cloud scores have no local PDF until they are downloaded (automatically when online).
+  const sync = useSync()
+  const onDownloadError = useCallback((message) => toast.error(message), [toast])
+  const offline = useOfflineFile(scoreId, { onError: onDownloadError })
+  const cloudOnly = !!score && offline.cloudOnly
+  // Open the document once the local check is done and the file is not cloud-only
+  // (a device-only score without a file still surfaces the usual open error).
+  const canOpen = !!score && !offline.loading && !offline.cloudOnly
+
+  // Reload the document when the page manager replaced the file bytes or a download landed.
+  const version = score ? `${score.pageCount}:${score.fileSize || 0}:${offline.version}` : 0
+  const { doc, error: docError, loading: docLoading } = usePdfDocument(canOpen ? scoreId : null, version)
 
   const pageOrder = useMemo(() => score?.pageOrder || [], [score])
   const count = pageOrder.length
@@ -135,6 +147,18 @@ function ScoreViewerInner({ scoreId }) {
     }
   }
 
+  // Drop the offline copy; the score stays in the account and can be downloaded again.
+  const removeDownload = async () => {
+    try {
+      await editor.flush()
+      await sync.removeDownload(scoreId)
+      toast.success('Nedladdningen togs bort. Stycket finns kvar i ditt konto.')
+      navigate('/', { replace: true })
+    } catch (err) {
+      toast.error(err?.message || 'Nedladdningen kunde inte tas bort.')
+    }
+  }
+
   const saveScoreNotes = useCallback(
     (notes) => {
       updateScore(scoreId, { notes }).catch(() => toast.error('Anteckningen om stycket kunde inte sparas.'))
@@ -146,7 +170,8 @@ function ScoreViewerInner({ scoreId }) {
     { label: 'Ordna sidor', icon: ListOrdered, onSelect: () => navigate(`/noter/${scoreId}/sidor`), testId: 'page-manager-link', key: 'pages' },
     { label: 'Redigera info', icon: Info, onSelect: () => setInfoOpen(true), testId: 'edit-info', key: 'info' },
     { label: 'Lägg till i projekt', icon: FolderPlus, onSelect: () => setAddOpen(true), testId: 'add-to-project', key: 'add' },
-    { label: 'Exportera PDF', icon: FileDown, onSelect: () => setExportOpen(true), testId: 'export-pdf', key: 'export', disabled: !count },
+    { label: 'Exportera PDF', icon: FileDown, onSelect: () => setExportOpen(true), testId: 'export-pdf', key: 'export', disabled: !count || cloudOnly },
+    score?.ownerId && offline.ready ? { label: 'Ta bort nedladdning', icon: Cloud, onSelect: removeDownload, testId: 'remove-download', key: 'remove-download' } : null,
     { separator: true },
     { label: 'Ta bort stycke', icon: Trash2, danger: true, onSelect: () => setDeleteOpen(true), testId: 'delete-score', key: 'delete' },
   ]
@@ -182,11 +207,11 @@ function ScoreViewerInner({ scoreId }) {
                 <BookOpen />
               </IconButton>
             ) : (
-              <IconButton label="Rita och anteckna" onClick={() => enterDraw()} disabled={!count} data-testid="mode-draw">
+              <IconButton label="Rita och anteckna" onClick={() => enterDraw()} disabled={!count || cloudOnly} data-testid="mode-draw">
                 <Pen />
               </IconButton>
             )}
-            <IconButton label={showThumbs ? 'Dölj sidöversikt' : 'Visa sidöversikt'} active={showThumbs} onClick={() => setShowThumbs((v) => !v)} disabled={!count} data-testid="thumbs-toggle">
+            <IconButton label={showThumbs ? 'Dölj sidöversikt' : 'Visa sidöversikt'} active={showThumbs} onClick={() => setShowThumbs((v) => !v)} disabled={!count || cloudOnly} data-testid="thumbs-toggle">
               <LayoutGrid />
             </IconButton>
             <IconButton label={showNotes ? 'Dölj anteckningar' : 'Visa anteckningar'} active={showNotes} onClick={() => setShowNotes((v) => !v)} data-testid="notes-toggle">
@@ -207,12 +232,14 @@ function ScoreViewerInner({ scoreId }) {
       <div className="flex min-h-0 flex-1">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="relative min-h-0 flex-1">
-            {loadingScore || (score && docLoading && !docError) ? (
+            {loadingScore || (score && offline.loading) || (canOpen && docLoading && !docError) ? (
               <div className="absolute inset-0 flex items-center justify-center text-gold-300" role="status">
                 <Spinner className="size-9" />
                 <span className="sr-only">Laddar noter…</span>
               </div>
             ) : null}
+
+            {cloudOnly ? <DownloadNeeded score={score} offline={offline} className="absolute inset-0 overflow-y-auto" /> : null}
 
             {score && docError ? (
               <EmptyState icon={Music} title="Kunde inte öppna noterna" description={docError} className="absolute inset-0">
@@ -222,7 +249,7 @@ function ScoreViewerInner({ scoreId }) {
               </EmptyState>
             ) : null}
 
-            {score && !docError && count === 0 ? (
+            {score && !docError && !cloudOnly && count === 0 ? (
               <EmptyState icon={ListOrdered} title="Inga sidor kvar" description="Alla sidor i stycket har tagits bort. Lägg till sidor igen i sidhanteraren." className="absolute inset-0">
                 <Button as={Link} to={`/noter/${scoreId}/sidor`}>
                   Ordna sidor
@@ -265,7 +292,7 @@ function ScoreViewerInner({ scoreId }) {
           </div>
 
           {/* Bottom controls (layout-reserved so the fitted page is never covered). */}
-          {score && count > 0 ? (
+          {score && count > 0 && !cloudOnly ? (
             <div className={cn('pb-safe pl-safe pr-safe z-20 flex shrink-0 flex-col items-center px-2 pt-2 pb-2', drawing ? 'gap-2' : '')} data-testid="viewer-controls">
               {drawing ? (
                 <AnnotationToolbar
