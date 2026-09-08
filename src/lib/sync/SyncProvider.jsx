@@ -95,6 +95,10 @@ export function SyncProvider({ children }) {
     }
   }, [user])
 
+  // Stable identity: the performance page suspends in an effect keyed on this function,
+  // so it must not change with every status update (that would release and re-suspend).
+  const suspendSync = useCallback((token) => engineRef.current?.suspend(token) || (() => {}), [])
+
   const requireCloud = useCallback(() => {
     if (!cloud) throw new Error('Molntjänsten är inte tillgänglig just nu.')
     return cloud
@@ -131,7 +135,9 @@ export function SyncProvider({ children }) {
         setUser(null)
       },
 
-      syncNow: () => engineRef.current?.sync('manual'),
+      syncNow: () => engineRef.current?.sync('manual', 'full'),
+      /** Pause automatic syncs (e.g. while on stage); returns the release function. */
+      suspendSync,
       downloadScore: (id) => engineRef.current?.downloadScore(id),
       removeDownload: (id) => engineRef.current?.removeDownload(id),
       downloadProject: async (projectId) => {
@@ -186,7 +192,7 @@ export function SyncProvider({ children }) {
         })
       },
     }),
-    [user, authLoading, cloud, online, status, localOnly, requireCloud],
+    [user, authLoading, cloud, online, status, localOnly, requireCloud, suspendSync],
   )
 
   // Dev/e2e hook: lets tests trigger and observe sync without UI.

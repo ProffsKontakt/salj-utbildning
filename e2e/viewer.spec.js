@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { PDFDocument } from 'pdf-lib'
 import fs from 'node:fs/promises'
-import { makePdf, importPdfViaUi, waitForRenderedPage, nonWhiteFraction, paintedFraction, currentPageBox, dragAcross, readTable, collectErrors, PAGE_SIZES, aspect } from './helpers.js'
+import { makePdf, importPdfViaUi, waitForRenderedPage, waitForCachedPage, nonWhiteFraction, paintedFraction, currentPageBox, dragAcross, readTable, collectErrors, PAGE_SIZES, aspect } from './helpers.js'
 
 test.describe('Visare & annotering', () => {
   test('renders pages, navigates, draws a persistent stroke, undo, export', async ({ page }) => {
@@ -56,10 +56,25 @@ test.describe('Visare & annotering', () => {
     // stroke goes from upper-left to lower-right on screen → PDF y decreases
     expect(pts[1]).toBeGreaterThan(pts[pts.length - 1])
 
-    // survives reload
+    // every page was pre-rendered into the image cache in the background
+    await expect.poll(async () => (await readTable(page, 'pageImages')).length, { timeout: 60_000 }).toBe(3)
+    const [cached] = await readTable(page, 'pageImages')
+    expect(cached.scoreId).toBe(id)
+    expect(cached.fileVersion).toBe(1)
+    expect(Array.isArray(cached.viewBox)).toBe(true)
+    expect(cached.thumb).toMatch(/ArrayBuffer/)
+
+    // survives reload – and the page now comes from the cache, not from pdf.js
     await page.reload()
-    await waitForRenderedPage(page)
+    const fromCache = await waitForCachedPage(page)
+    expect(await nonWhiteFraction(fromCache)).toBeGreaterThan(0.02)
     await expect.poll(() => paintedFraction(page.getByTestId('annotation-canvas'))).toBeGreaterThan(0.001)
+    // turning pages keeps serving cached images (previous and next are preloaded)
+    await page.getByTestId('page-next').click()
+    await waitForCachedPage(page)
+    await expect(page.locator('[data-stage-page="preload"] [data-page-index]')).toHaveCount(2)
+    await page.getByTestId('page-prev').click()
+    await waitForCachedPage(page)
 
     // highlighter + undo (the viewer reopens in read mode: the pen button enters draw mode)
     await page.getByTestId('tool-pen').click()

@@ -5,6 +5,7 @@ import { CalendarDays, CalendarX, ChevronLeft, CloudDownload, ListMusic, MapPin,
 import { addScoresToProject, db, deleteProject, getProject, getProjectSetlist, removeScoreFromProject, reorderProjectScores } from '../db/db.js'
 import { pluralize } from '../lib/format.js'
 import { useSync } from '../lib/sync/useSync.js'
+import { prepareProject } from '../lib/pageCache.js'
 import { Button, ConfirmDialog, EmptyState, IconButton, Menu, Spinner, useToast } from '../components/ui/index.js'
 import { cn } from '../components/ui/cn.js'
 import { Setlist } from '../components/projects/Setlist.jsx'
@@ -136,6 +137,8 @@ function ProjectDetailView({ projectId }) {
     try {
       const n = await sync.downloadProject(projectId)
       toast.success(n ? pluralize(n, 'stycke nedladdat', 'stycken nedladdade') : 'Allt är redan nedladdat')
+      // Everything is on the device: pre-render the pages so the stage is instant.
+      prepareProject(projectId).catch(() => {})
     } catch (err) {
       toast.error(err?.message || 'Nedladdningen misslyckades. Försök igen.')
     } finally {

@@ -4,6 +4,15 @@ import { STORAGE_BUCKET } from '../../config/supabase.js'
 import { REMOTE_TABLE } from './mapping.js'
 
 const PAGE = 500
+const REQUEST_TIMEOUT_MS = 20_000
+
+/** Abort signal for one request: a venue network that silently drops packets must never hang a sync. */
+function timeoutSignal() {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  const c = new AbortController()
+  setTimeout(() => c.abort(), REQUEST_TIMEOUT_MS)
+  return c.signal
+}
 
 function mapUser(u) {
   if (!u) return null
@@ -88,6 +97,7 @@ export function createSupabaseCloud() {
         .order('synced_at', { ascending: true })
         .order(table === 'annotations' ? 'page_index' : 'id', { ascending: true })
         .range(offset, offset + limit - 1)
+        .abortSignal(timeoutSignal())
       if (error) throw new Error(describe(error))
       return data || []
     },
@@ -95,7 +105,7 @@ export function createSupabaseCloud() {
     async upsert(table, rows) {
       if (!rows.length) return []
       const onConflict = table === 'annotations' ? 'score_id,page_index' : 'id'
-      const { data, error } = await sb.from(REMOTE_TABLE[table]).upsert(rows, { onConflict }).select('*')
+      const { data, error } = await sb.from(REMOTE_TABLE[table]).upsert(rows, { onConflict }).select('*').abortSignal(timeoutSignal())
       if (error) throw new Error(describe(error))
       return data || []
     },
@@ -106,7 +116,7 @@ export function createSupabaseCloud() {
       for (const { key, deletedAt } of entries) {
         let q = sb.from(t).update({ deleted_at: deletedAt, updated_at: deletedAt })
         q = table === 'annotations' ? q.match({ score_id: key.scoreId, page_index: key.pageIndex }) : q.eq('id', key)
-        const { error } = await q
+        const { error } = await q.abortSignal(timeoutSignal())
         if (error) throw new Error(describe(error))
       }
     },

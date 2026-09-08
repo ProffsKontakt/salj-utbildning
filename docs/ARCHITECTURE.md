@@ -46,16 +46,32 @@ Alla skrivningar går via hjälpfunktionerna i `db.js` (`createScore`, `updateSc
 `reorderProjectScores`, …). Läsning i komponenter sker med `useLiveQuery` så UI:t uppdateras
 automatiskt.
 
-## Koordinater & rendering (`src/lib/pdf.js`, `src/components/PdfPage.jsx`)
+## Koordinater & rendering (`src/lib/pdf.js`, `src/lib/pageCache.js`, `src/components/PdfPage.jsx`)
 
+* **Snabbvisning (sidbildscache).** pdf.js måste avkoda varje skannad sida i JavaScript varje
+  gång den visas – 1–3 s per sida på en iPad. Därför rastreras varje sida en gång i bakgrunden
+  (`pageCache.js`: prioriterad kö, en sida i taget, pausar medan någon ritar) till en JPEG
+  med längsta sida 2600 px plus en 480 px-tumnagel, och lagras i `pageImages` (metadata +
+  tumnagel) / `pageImageBlobs` (bytes). Visaren och konsertläget visar bilden som `<img>`
+  (hårdvaruavkodad, omedelbar) och öppnar PDF:en bara när en sida saknar bild eller när
+  man zoomar förbi bildens upplösning (skärpe-overlay). Cachen är enhetslokal, synkas och
+  exporteras aldrig, rensas när filbytes byts (sidhanterare, ny nedladdning) eller stycket
+  lämnar enheten, och byggs om vid appstart (`warmPageCache`) om något saknas. Rotation
+  ändrar inte bilden – den vrids med CSS.
+* `src/lib/viewport.js` bygger en pdf.js-kompatibel `PageViewport` från sidans `viewBox`,
+  `userUnit` och rotation (sparas med varje sidbild), så geometri och annoteringskoordinater
+  fungerar utan ett öppnat dokument. Transformen är identisk med pdf.js.
 * `getPageViewport(page, { scale, rotation })` kombinerar sidans egna rotation med användarens.
 * `renderPage(page, canvas, { scale, rotation, dpr })` ritar med device-pixel-ratio, klampad
   så canvasen håller sig under 12 MP och 4096 px per sida (iOS-gräns).
-* `<PdfPage doc pageIndex scale rotation onViewport>` renderar en sida och positionerar barn
-  (annoteringslagret) absolut över sidan. Elementets CSS-storlek = `viewport.width × height`,
-  så pekarkoordinater relativt elementet kan konverteras direkt med `viewport.convertToPdfPoint`.
+* `<PdfPage doc raster pageIndex scale rotation onViewport>` visar sidbilden (eller ritar med
+  pdf.js) och positionerar barn (annoteringslagret) absolut över sidan. Elementets CSS-storlek
+  = `viewport.width × height`, så pekarkoordinater relativt elementet kan konverteras direkt
+  med `viewport.convertToPdfPoint`. `data-source` = `image` | `pdf`.
+* `ScoreStage` äger dokumentet: `usePdfDocument` anropas bara när den aktuella sidan saknar
+  bild eller zoomen är > 1,25. Föregående och nästa sida hålls förrenderade (dolda slots).
 * Dokument hålls i en referensräknad cache: `usePdfDocument(scoreId, version)`.
-  Efter byte av filbytes: `invalidateScoreDocument(scoreId)` och öka `version`.
+  `invalidateScoreDocument(scoreId)` skickar `pdfEvents` »invalidate« så öppna vyer laddar om.
 
 ## Export (`src/lib/pdfEdit.js`)
 
@@ -133,6 +149,24 @@ npm run icons      # regenerera PWA-ikoner från SVG
 | `virtual:pwa-register` + uppskjuten reload | Ny version laddas om direkt i biblioteket men aldrig mitt i en konsert. `vite:preloadError` ⇒ reload (gamla chunkar 404:ar efter deploy). |
 | dnd-kit `PointerSensor` med `distance: 6` på ett handtag med `touch-action: none` | Låter listan scrolla med fingret samtidigt som handtaget drar. Svenska skärmläsartexter i `dndA11y.js`. |
 | Hemskärmsapp ≠ Safari-flik | iOS ger dem separata IndexedDB. Appen uppmanar till installation innan import och erbjuder backup. |
+| Förrenderade sidbilder i stället för live-pdf.js | Safari saknar hårdvaruväg för pdf.js: en skannad sida kostar 1–3 s JS-avkodning per visning. En JPEG per sida gör bläddring till ett `<img>`-byte; pdf.js finns kvar som reserv och skärpe-overlay vid zoom. |
+| Ingen bakgrundssynk | Push först 5 s efter en ändring, hämtning bara på begäran, allt pausat på scenen. Varje synk-omgång läste två hela tabeller och triggade omritning av alla vyer – på scenen märktes det som hack i pennan. |
+
+## Ritning (`src/components/viewer/AnnotationLayer.jsx`, `src/lib/penState.js`)
+
+* **Handavvisning.** En touch ignoreras helt medan en penna är på glaset och 700 ms efter
+  att den lyfts (`touchBlocked()`), både i ritlagret och i scenens gester; under ett
+  pennstreck stoppas alla `touchstart`/`touchmove` på dokumentnivå så handen aldrig
+  scrollar, zoomar eller bläddrar. Medan ett verktyg är aktivt bläddrar fingrar aldrig
+  (varken tryck eller svep) – de får bara panorera och nypa.
+* **Endast penna** slås på automatiskt första gången en penna ritar (`onPenSeen`), tills
+  användaren själv väljer (`penOnlyChosen`).
+* **Tryckkänslig penna.** Pennstreck sparar `pressures` (ett värde per punkt, EMA-utjämnat)
+  och ritas som en fylld kontur med variabel bredd (0,55–1,45 × vald bredd). Överstrykning
+  har fast bredd. Strecks utan `pressures` (finger, mus, äldre data) ritas som förut.
+  Webbläsarens förutsagda punkter (`getPredictedEvents`) ritas bara på live-canvasen.
+* **Inga tappade streck.** Ändringar som görs innan sidans anteckningspost hunnit laddas köas
+  i redigeraren och tillämpas när laddningen landar.
 
 ## Tester
 
@@ -147,4 +181,6 @@ Se `docs/CLOUD.md` för uppsättning och synkmodell. Kort: `src/lib/sync/engine.
 last-write-wins per rad. `SyncProvider` (kontext `useSync()`) äger inloggningsstatus och
 motorn; `AdoptLocalDialog` erbjuder uppladdning av lokala noter vid första inloggningen.
 Lokalt schema v3 lägger till `ownerId`, `dirty`, fil-/tumnagelversioner och tabellen
-`tombstones`. En `files`-rad betyder »nedladdad«; utan den är stycket bara i molnet.
+`tombstones`; v4 lägger till cachetabellerna `pageImages`/`pageImageBlobs`. En `files`-rad
+betyder »nedladdad«; utan den är stycket bara i molnet. Synken körs bara som push efter
+lokala ändringar och som full synk vid inloggning/appstart/»Synka nu« – se `docs/CLOUD.md`.

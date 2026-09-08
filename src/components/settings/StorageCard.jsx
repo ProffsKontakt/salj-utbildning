@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { HardDrive, ShieldCheck, TriangleAlert, Info } from 'lucide-react'
-import { db, totalFileBytes } from '../../db/db.js'
+import { db, totalFileBytes, pageCacheBytes, clearPageCache } from '../../db/db.js'
 import { formatBytes } from '../../lib/bytes.js'
 import { pluralize } from '../../lib/format.js'
 import { isIOS, isStandalone, requestPersistentStorage, storageEstimate } from '../../lib/platform.js'
@@ -23,7 +23,23 @@ export function StorageCard() {
   const toast = useToast()
   const { user } = useSync()
   // `files` holds a row only for scores kept offline, so bytes = what actually lives on this device.
-  const library = useLiveQuery(async () => ({ count: await db.scores.count(), downloaded: await db.files.count(), bytes: await totalFileBytes() }), [], null)
+  const library = useLiveQuery(
+    async () => ({ count: await db.scores.count(), downloaded: await db.files.count(), bytes: await totalFileBytes(), cache: await pageCacheBytes(), cachedPages: await db.pageImages.count() }),
+    [],
+    null,
+  )
+  const [clearingCache, setClearingCache] = useState(false)
+  const clearCache = async () => {
+    setClearingCache(true)
+    try {
+      await clearPageCache()
+      toast.success('Snabbvisningen rensades. Sidorna förbereds igen när de öppnas.')
+    } catch {
+      toast.error('Kunde inte rensa snabbvisningen.')
+    } finally {
+      setClearingCache(false)
+    }
+  }
   // { usage, quota } | null (unsupported) | undefined (loading)
   const [estimate, setEstimate] = useState(undefined)
   // true | false | null (unsupported) | undefined (loading)
@@ -43,7 +59,7 @@ export function StorageCard() {
   }, [])
 
   // Re-measure whenever the library changes (import, delete, clear).
-  const libraryKey = library ? `${library.count}:${library.downloaded}:${library.bytes}` : ''
+  const libraryKey = library ? `${library.count}:${library.downloaded}:${library.bytes}:${library.cache}` : ''
   useEffect(() => refresh(), [refresh, libraryKey])
 
   const requestPersist = async () => {
@@ -103,6 +119,19 @@ export function StorageCard() {
         />
       </div>
       {quota ? <div className="mt-1.5 text-xs text-ivory-500">Notställ delar utrymmet med webbläsarens övriga data. Siffran är webbläsarens uppskattning.</div> : null}
+
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" data-testid="page-cache">
+        <div className="min-w-0 text-[13px] leading-relaxed text-ivory-300">
+          <span className="text-ivory-100">Snabbvisning:</span>{' '}
+          {library === null ? 'räknar…' : library.cachedPages ? `${pluralize(library.cachedPages, 'förberedd sida', 'förberedda sidor')} · ${formatBytes(library.cache)}` : 'inga förberedda sidor ännu'}
+          <span className="block text-ivory-500">Färdigritade sidbilder som gör bläddring och konsertläge omedelbara. Byggs om automatiskt när de behövs.</span>
+        </div>
+        {library?.cachedPages ? (
+          <Button variant="secondary" size="sm" onClick={clearCache} loading={clearingCache} data-testid="clear-page-cache" className="shrink-0 self-start sm:self-auto">
+            Rensa snabbvisning
+          </Button>
+        ) : null}
+      </div>
 
       <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 text-[13px] leading-relaxed text-ivory-300">

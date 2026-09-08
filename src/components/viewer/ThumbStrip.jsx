@@ -1,20 +1,25 @@
-// Horizontal strip of page thumbnails. Thumbnails render lazily (IntersectionObserver)
+// Horizontal strip of page thumbnails. Uses the small cached page images
+// (lib/pageCache.js) – no pdf.js decode per thumbnail – and falls back to the
+// PDF for pages without one. Thumbnails render lazily (IntersectionObserver)
 // once the score has more than EAGER_LIMIT pages so 300-page scores never freeze the UI.
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { PdfPage } from '../PdfPage.jsx'
 import { getPageBaseSize } from '../../lib/pdf.js'
+import { usePdfDocument } from '../../hooks/usePdfDocument.js'
+import { usePageImage, PRIORITY } from '../../lib/pageCache.js'
+import { baseSizeFromMeta } from '../../lib/viewport.js'
 import { cn } from '../ui/index.js'
 
 const THUMB_H = 88
 const EAGER_LIMIT = 40
 const PLACEHOLDER_W = 64
 
-const Thumb = memo(function Thumb({ doc, pageIndex, rotation, displayIndex, current, onSelect, root, lazy }) {
+const Thumb = memo(function Thumb({ doc, score, pageIndex, rotation, displayIndex, current, onSelect, root, lazy, onNeedDoc }) {
   const ref = useRef(null)
   const [near, setNear] = useState(!lazy)
-  const [scale, setScale] = useState(null)
+  const [pageScale, setPageScale] = useState(null) // { forDoc, forIndex, forRotation, scale }
 
-  // Mount the PdfPage only when the button is close to the visible strip.
+  // Mount the page only when the button is close to the visible strip.
   useEffect(() => {
     if (!lazy || near) return
     const el = ref.current
@@ -36,28 +41,43 @@ const Thumb = memo(function Thumb({ doc, pageIndex, rotation, displayIndex, curr
     return () => io.disconnect()
   }, [lazy, near, root])
 
-  // Compute the scale that gives THUMB_H height once the page proxy is known.
+  const { raster, missing } = usePageImage(score, pageIndex, { thumb: true, priority: PRIORITY.score, enabled: near })
+  const rasterScale = useMemo(() => {
+    if (!raster) return null
+    const { height } = baseSizeFromMeta(raster, rotation)
+    return height ? THUMB_H / height : 1
+  }, [raster, rotation])
+
+  // A page without an image needs the PDF: ask the strip to open it.
   useEffect(() => {
-    if (!near || !doc) return
+    if (near && missing) onNeedDoc()
+  }, [near, missing, onNeedDoc])
+
+  // Compute the scale that gives THUMB_H height once the page proxy is known (pdf.js path).
+  useEffect(() => {
+    if (!near || !doc || raster) return
     let alive = true
     doc
       .getPage(pageIndex + 1)
       .then((page) => {
         if (!alive) return
         const { height } = getPageBaseSize(page, rotation)
-        setScale(height ? THUMB_H / height : 1)
+        setPageScale({ forDoc: doc, forIndex: pageIndex, forRotation: rotation, scale: height ? THUMB_H / height : 1 })
       })
       .catch(() => {
-        if (alive) setScale(null)
+        if (alive) setPageScale(null)
       })
     return () => {
       alive = false
     }
-  }, [near, doc, pageIndex, rotation])
+  }, [near, doc, raster, pageIndex, rotation])
 
   useEffect(() => {
     if (current) ref.current?.scrollIntoView?.({ inline: 'center', block: 'nearest', behavior: 'smooth' })
   }, [current])
+
+  const validPageScale = pageScale && pageScale.forDoc === doc && pageScale.forIndex === pageIndex && pageScale.forRotation === rotation ? pageScale.scale : null
+  const scale = rasterScale ?? (doc ? validPageScale : null)
 
   return (
     <li className="flex shrink-0">
@@ -75,7 +95,7 @@ const Thumb = memo(function Thumb({ doc, pageIndex, rotation, displayIndex, curr
       >
         <span className="block overflow-hidden rounded-md" style={{ height: THUMB_H, minWidth: scale ? undefined : PLACEHOLDER_W }}>
           {near && scale ? (
-            <PdfPage doc={doc} pageIndex={pageIndex} scale={scale} rotation={rotation} quality="thumb" className="rounded-md" />
+            <PdfPage doc={raster ? null : doc} raster={raster} pageIndex={pageIndex} scale={scale} rotation={rotation} quality="thumb" className="rounded-md" />
           ) : (
             <span className="block h-full animate-pulse-soft rounded-md bg-ink-700" style={{ width: PLACEHOLDER_W }} aria-hidden="true" />
           )}
@@ -88,15 +108,20 @@ const Thumb = memo(function Thumb({ doc, pageIndex, rotation, displayIndex, curr
 
 /**
  * @param {object} p
- * @param {object} p.doc
+ * @param {string} p.scoreId
+ * @param {object} p.score
  * @param {number[]} p.pageOrder
  * @param {Record<number,number>} p.rotations
  * @param {number} p.displayIndex
  * @param {(i:number) => void} p.onSelect
  */
-export function ThumbStrip({ doc, pageOrder, rotations = {}, displayIndex, onSelect, className }) {
+export function ThumbStrip({ scoreId, score, pageOrder, rotations = {}, displayIndex, onSelect, className }) {
   const rootRef = useRef(null)
   const lazy = pageOrder.length > EAGER_LIMIT
+  // The PDF is opened only when some visible thumbnail has no cached image.
+  const [needDoc, setNeedDoc] = useState(false)
+  const onNeedDoc = useMemo(() => () => setNeedDoc(true), [])
+  const { doc } = usePdfDocument(needDoc ? scoreId : null)
   return (
     <ul
       ref={rootRef}
@@ -110,6 +135,7 @@ export function ThumbStrip({ doc, pageOrder, rotations = {}, displayIndex, onSel
         <Thumb
           key={`${pageIndex}`}
           doc={doc}
+          score={score}
           pageIndex={pageIndex}
           rotation={rotations[pageIndex] || 0}
           displayIndex={i}
@@ -117,6 +143,7 @@ export function ThumbStrip({ doc, pageOrder, rotations = {}, displayIndex, onSel
           onSelect={onSelect}
           root={rootRef}
           lazy={lazy}
+          onNeedDoc={onNeedDoc}
         />
       ))}
     </ul>

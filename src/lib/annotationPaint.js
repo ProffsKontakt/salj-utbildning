@@ -27,20 +27,50 @@ export function makeText({ x, y, text = '', color = '#b91c1c', size = 12 }) {
   return { id: uid(), x, y, text, color, size }
 }
 
+// Pen pressure → width. A light touch draws a thin line, a firm one a full-width
+// stroke (0.55–1.45 × the chosen width), like the Pen in Apple's Markup.
+export const PRESSURE_MIN_FACTOR = 0.55
+export const PRESSURE_RANGE_FACTOR = 0.9
+
+export function widthForPressure(base, pressure) {
+  const p = Math.min(1, Math.max(0, pressure ?? 0.5))
+  return base * (PRESSURE_MIN_FACTOR + PRESSURE_RANGE_FACTOR * p)
+}
+
 /**
  * Append a point (PDF user space) unless it is (almost) identical to the last one.
- * `minDist` in PDF units keeps stroke arrays compact.
+ * `minDist` in PDF units keeps stroke arrays compact. `pressure` (0..1, stylus only)
+ * is stored alongside in `stroke.pressures`; strokes without it draw at constant width.
  */
-export function appendPoint(stroke, px, py, minDist = 0.35) {
+export function appendPoint(stroke, px, py, pressure = null, minDist = 0.35) {
   const pts = stroke.points
   const n = pts.length
   if (n >= 2) {
     const dx = px - pts[n - 2]
     const dy = py - pts[n - 1]
-    if (dx * dx + dy * dy < minDist * minDist) return false
+    if (dx * dx + dy * dy < minDist * minDist) {
+      // keep the firmest pressure of coalesced points that landed on the same spot
+      if (pressure != null && stroke.pressures && stroke.pressures.length) {
+        const i = stroke.pressures.length - 1
+        stroke.pressures[i] = Math.max(stroke.pressures[i], pressure)
+      }
+      return false
+    }
   }
   pts.push(px, py)
+  if (pressure != null) {
+    if (!stroke.pressures) stroke.pressures = new Array(n / 2).fill(pressure)
+    stroke.pressures.push(pressure)
+  } else if (stroke.pressures) {
+    stroke.pressures.push(stroke.pressures[stroke.pressures.length - 1] ?? 0.5)
+  }
   return true
+}
+
+/** Does this stroke carry usable per-point pressure (pen tool, at least one varying value)? */
+export function hasPressure(stroke) {
+  const p = stroke.pressures
+  return stroke.tool !== 'highlighter' && Array.isArray(p) && p.length * 2 === stroke.points.length && p.length >= 1
 }
 
 /** Convert a CSS-pixel point (relative to the page element) to PDF user space. */
@@ -61,6 +91,7 @@ function setupCtx(ctx, dpr) {
 export function paintStroke(ctx, viewport, stroke, dpr = 1) {
   const pts = stroke.points
   if (!pts || pts.length < 2) return
+  if (hasPressure(stroke)) return paintPressureStroke(ctx, viewport, stroke, dpr)
   setupCtx(ctx, dpr)
   ctx.save()
   ctx.lineCap = 'round'
@@ -94,6 +125,108 @@ export function paintStroke(ctx, viewport, stroke, dpr = 1) {
     ctx.lineTo(px, py)
   }
   ctx.stroke()
+  ctx.restore()
+}
+
+/**
+ * Trace the outline of a variable-width stroke into `path` (anything with the canvas
+ * methods moveTo / lineTo / quadraticCurveTo / arc, e.g. a 2d context or the PDF
+ * adapter in pdfEdit.js): left edge forward, round cap, right edge back, round cap.
+ * Filled once, so overlaps never darken and joins stay smooth. Coordinates are in
+ * whatever space the caller provides (CSS px or PDF units) – the math is orientation-free.
+ */
+export function traceVariableWidth(xs, ys, ws, path) {
+  const n = xs.length
+  if (n === 0) return
+  if (n === 1) {
+    path.arc(xs[0], ys[0], ws[0] / 2, 0, Math.PI * 2, false)
+    return
+  }
+  // Unit tangents (central differences), normals, and the two edges.
+  const tx = new Float64Array(n)
+  const ty = new Float64Array(n)
+  let lx = 1
+  let ly = 0
+  for (let i = 0; i < n; i++) {
+    const a = i === 0 ? 0 : i - 1
+    const b = i === n - 1 ? n - 1 : i + 1
+    let dx = xs[b] - xs[a]
+    let dy = ys[b] - ys[a]
+    const len = Math.hypot(dx, dy)
+    if (len < 1e-6) {
+      dx = lx
+      dy = ly
+    } else {
+      dx /= len
+      dy /= len
+      lx = dx
+      ly = dy
+    }
+    tx[i] = dx
+    ty[i] = dy
+  }
+  const leftX = (i) => xs[i] - ty[i] * (ws[i] / 2)
+  const leftY = (i) => ys[i] + tx[i] * (ws[i] / 2)
+  const rightX = (i) => xs[i] + ty[i] * (ws[i] / 2)
+  const rightY = (i) => ys[i] - tx[i] * (ws[i] / 2)
+  // Left edge, start → end (quadratic smoothing through midpoints).
+  path.moveTo(leftX(0), leftY(0))
+  let px = leftX(0)
+  let py = leftY(0)
+  for (let i = 1; i < n; i++) {
+    const x = leftX(i)
+    const y = leftY(i)
+    path.quadraticCurveTo(px, py, (px + x) / 2, (py + y) / 2)
+    px = x
+    py = y
+  }
+  path.lineTo(px, py)
+  // Round cap at the end: from the left edge over the tip to the right edge.
+  const e = n - 1
+  path.arc(xs[e], ys[e], ws[e] / 2, Math.atan2(leftY(e) - ys[e], leftX(e) - xs[e]), Math.atan2(rightY(e) - ys[e], rightX(e) - xs[e]), true)
+  // Right edge, end → start.
+  px = rightX(e)
+  py = rightY(e)
+  for (let i = e - 1; i >= 0; i--) {
+    const x = rightX(i)
+    const y = rightY(i)
+    path.quadraticCurveTo(px, py, (px + x) / 2, (py + y) / 2)
+    px = x
+    py = y
+  }
+  path.lineTo(px, py)
+  // Round cap at the start: from the right edge around the back to the left edge.
+  path.arc(xs[0], ys[0], ws[0] / 2, Math.atan2(rightY(0) - ys[0], rightX(0) - xs[0]), Math.atan2(leftY(0) - ys[0], leftX(0) - xs[0]), true)
+}
+
+/** Per-point widths of a pressure stroke for a given base width (same units as `base`). */
+export function pressureWidths(stroke, base) {
+  const pr = stroke.pressures
+  const ws = new Float64Array(pr.length)
+  for (let i = 0; i < pr.length; i++) ws[i] = Math.max(base * 0.25, widthForPressure(base, pr[i]))
+  return ws
+}
+
+function paintPressureStroke(ctx, viewport, stroke, dpr) {
+  const pts = stroke.points
+  const n = pts.length / 2
+  const base = Math.max(0.5, (stroke.width || 1) * viewport.scale)
+  const xs = new Float64Array(n)
+  const ys = new Float64Array(n)
+  for (let i = 0; i < n; i++) {
+    const [x, y] = viewport.convertToViewportPoint(pts[i * 2], pts[i * 2 + 1])
+    xs[i] = x
+    ys[i] = y
+  }
+  setupCtx(ctx, dpr)
+  ctx.save()
+  ctx.fillStyle = stroke.color || '#000'
+  ctx.globalAlpha = typeof stroke.opacity === 'number' ? stroke.opacity : 1
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.beginPath()
+  traceVariableWidth(xs, ys, pressureWidths(stroke, base), ctx)
+  ctx.closePath()
+  ctx.fill()
   ctx.restore()
 }
 

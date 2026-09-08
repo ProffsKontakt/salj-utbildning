@@ -12,14 +12,20 @@ async function signIn(page, email, password = 'hemligt-losen') {
   await expect(page.getByTestId('account-card')).toBeVisible({ timeout: 30_000 })
 }
 
+/**
+ * Wait until the engine is idle and nothing is left to upload. The pending count is
+ * read from IndexedDB (not from the engine's cached status), so a push that is due but
+ * has not started yet – writes are debounced – still counts as unsynced.
+ */
 async function waitSynced(page) {
   await expect
     .poll(
       async () => {
-        return page.evaluate(() => {
+        return page.evaluate(async () => {
           const s = window.__notstallSync
           if (!s?.user) return 'no-user'
-          return `${s.status.phase}:${s.status.pending}`
+          const { countUnsynced } = await import('/src/db/db.js')
+          return `${s.status.phase}:${await countUnsynced(s.user.id)}`
         })
       },
       { timeout: 60_000, message: 'sync should settle to idle with 0 pending' },

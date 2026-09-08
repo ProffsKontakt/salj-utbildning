@@ -5,10 +5,23 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Trash2 } from 'lucide-react'
 import { clampDpr } from '../../lib/pdf.js'
 import { appendPoint, makeStroke, makeText, paintAnnotation, paintStroke, strokeHit, textHit, measureText } from '../../lib/annotationPaint.js'
+import { noteGestureStart, noteGestureEnd, notePenSeen, touchBlocked } from '../../lib/penState.js'
 import { Button, cn } from '../ui/index.js'
 
 const ERASER_RADIUS = 12
 const TAP_SLOP = 8
+// Pressure is smoothed a little so a shaky hand does not produce a beaded line.
+const PRESSURE_SMOOTHING = 0.35
+const PREDICTED_POINTS = 2
+
+function clamp01(v) {
+  return Math.min(1, Math.max(0, v))
+}
+
+/** Stylus pressure (0..1) or null for fingers and mice, whose pressure carries no information. */
+function pressureOf(ev) {
+  return ev.pointerType === 'pen' ? clamp01(typeof ev.pressure === 'number' ? ev.pressure : 0.5) : null
+}
 
 function nowMs() {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
@@ -21,7 +34,7 @@ function nowMs() {
  * @param {object} props.toolSettings    { penColor, penWidth, highlighterColor, highlighterWidth, textColor, textSize }
  * @param {boolean} props.penOnly        touch never draws (stylus/mouse only)
  * @param {object|null} props.annotation committed record { strokes, texts }
- * @param {boolean} props.interactive    false for the preloaded/hidden page
+ * @param {boolean} props.interactive    false for a preloaded/hidden page
  * @param {object} props.editor          { commitStroke, erase, addText, updateText, removeText }
  * @param {string} [props.testId]        data-testid for the base canvas
  */
@@ -119,16 +132,28 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
   )
 
   // ── Touch guards while a stroke is active ─────────────────────────────
+  // Finger stroke: the ink surface must not scroll or zoom. Pen stroke: nothing else on
+  // the page may react to the resting hand either – every touch is swallowed until
+  // the pen lifts (this is what makes drawing with a Pencil feel like Files/Notes).
   const guardsRef = useRef(null)
-  const addGuards = useCallback(() => {
+  const addGuards = useCallback((pointerType) => {
     if (guardsRef.current) return
     const prevent = (e) => e.preventDefault()
     const el = rootRef.current
     el?.addEventListener('touchmove', prevent, { passive: false })
     document.addEventListener('gesturestart', prevent, { passive: false })
+    const pen = pointerType === 'pen'
+    if (pen) {
+      document.addEventListener('touchstart', prevent, { passive: false, capture: true })
+      document.addEventListener('touchmove', prevent, { passive: false, capture: true })
+    }
     guardsRef.current = () => {
       el?.removeEventListener('touchmove', prevent)
       document.removeEventListener('gesturestart', prevent)
+      if (pen) {
+        document.removeEventListener('touchstart', prevent, { capture: true })
+        document.removeEventListener('touchmove', prevent, { capture: true })
+      }
     }
   }, [])
   const removeGuards = useCallback(() => {
@@ -137,6 +162,8 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
   }, [])
 
   // ── Live stroke painting (batched per frame) ──────────────────────────
+  // The browser's predicted points (where the pen is heading) are painted on the live
+  // canvas only – they shave a frame or two off the perceived latency and are never stored.
   const schedulePaintLive = useCallback(() => {
     if (frameRef.current) return
     frameRef.current = requestAnimationFrame(() => {
@@ -147,7 +174,12 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
       const ctx = canvas.getContext('2d')
       ctx.setTransform(1, 0, 0, 1, 0, 0)
       ctx.clearRect(0, 0, canvas.width, canvas.height)
-      paintStroke(ctx, viewport, g.stroke, dprRef.current)
+      let stroke = g.stroke
+      if (g.predicted?.length) {
+        stroke = { ...g.stroke, points: g.stroke.points.slice(), pressures: g.stroke.pressures ? g.stroke.pressures.slice() : undefined }
+        for (const [px, py] of g.predicted) appendPoint(stroke, px, py, g.pressure)
+      }
+      paintStroke(ctx, viewport, stroke, dprRef.current)
     })
   }, [viewport])
 
@@ -187,6 +219,7 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
       frameRef.current = 0
     }
     removeGuards()
+    if (g) noteGestureEnd(g.pointerType)
     return g
   }, [removeGuards])
 
@@ -204,7 +237,10 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
     }
     if (g.kind === 'stroke') {
       // A lone touch-down becomes a dot, exactly like a pointerup on the same spot.
-      if (g.stroke.points.length === 2) g.stroke.points.push(g.stroke.points[0], g.stroke.points[1])
+      if (g.stroke.points.length === 2) {
+        g.stroke.points.push(g.stroke.points[0], g.stroke.points[1])
+        if (g.stroke.pressures) g.stroke.pressures.push(g.stroke.pressures[0])
+      }
       if (g.stroke.points.length >= 2 && g.editor?.commitStroke) {
         // The live stroke stays visible until the base repaint (on commit) clears it.
         g.editor.commitStroke(g.stroke)
@@ -267,10 +303,12 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
   )
 
   // ── Pointer events ────────────────────────────────────────────────────
+  // Palm rejection: a touch is ignored while a stylus is on the glass and for a
+  // moment after it lifts (the hand usually stays), and always when pen-only is on.
   const acceptsPointer = useCallback(
     (e) => {
       if (!drawing || !viewport) return false
-      if (penOnly && e.pointerType === 'touch') return false
+      if (e.pointerType === 'touch' && (penOnly || touchBlocked())) return false
       if (e.pointerType === 'mouse' && e.button !== 0) return false
       return e.isPrimary !== false
     },
@@ -278,10 +316,15 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
   )
 
   const onPointerDown = (e) => {
-    if (gestureRef.current) return
+    if (gestureRef.current) {
+      // A second contact during a pen stroke is the hand: swallow it here so the stage
+      // never sees a tap or a swipe.
+      if (gestureRef.current.pointerType === 'pen' && e.pointerType === 'touch') e.stopPropagation()
+      return
+    }
     if (!acceptsPointer(e)) {
       // A finger on a pen-only surface: nudge the user, let the stage handle the gesture.
-      if (drawing && penOnly && e.pointerType === 'touch' && (tool === 'pen' || tool === 'highlighter')) {
+      if (drawing && penOnly && e.pointerType === 'touch' && !touchBlocked() && (tool === 'pen' || tool === 'highlighter')) {
         setFlash(true)
       }
       return
@@ -294,6 +337,7 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
     } catch {
       /* ignore */
     }
+    if (e.pointerType === 'pen') notePenSeen()
 
     if (tool === 'pen' || tool === 'highlighter') {
       const stroke =
@@ -301,9 +345,13 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
           ? makeStroke({ tool: 'pen', color: toolSettings?.penColor, width: toolSettings?.penWidth })
           : makeStroke({ tool: 'highlighter', color: toolSettings?.highlighterColor, width: toolSettings?.highlighterWidth })
       const [px, py] = viewport.convertToPdfPoint(x, y)
+      // The highlighter is a marker: constant width, whatever the pressure.
+      const pressure = tool === 'pen' ? pressureOf(e.nativeEvent) : null
       stroke.points.push(px, py)
-      gestureRef.current = { kind: 'stroke', pointerId: e.pointerId, stroke, editor }
-      addGuards()
+      if (pressure != null) stroke.pressures = [pressure]
+      gestureRef.current = { kind: 'stroke', pointerId: e.pointerId, pointerType: e.pointerType, stroke, editor, pressure, predicted: null }
+      noteGestureStart(e.pointerType)
+      addGuards(e.pointerType)
       schedulePaintLive()
       return
     }
@@ -312,21 +360,24 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
       const g = {
         kind: 'erase',
         pointerId: e.pointerId,
+        pointerType: e.pointerType,
         editor,
         working: { strokes: annotation?.strokes || [], texts: annotation?.texts || [] },
         strokeIds: new Set(),
         textIds: new Set(),
       }
       gestureRef.current = g
-      addGuards()
+      noteGestureStart(e.pointerType)
+      addGuards(e.pointerType)
       moveEraser(x, y)
       eraseAt(g, x, y)
       return
     }
 
     if (tool === 'text') {
-      gestureRef.current = { kind: 'tap', pointerId: e.pointerId, x, y, t: nowMs() }
-      addGuards()
+      gestureRef.current = { kind: 'tap', pointerId: e.pointerId, pointerType: e.pointerType, x, y, t: nowMs() }
+      noteGestureStart(e.pointerType)
+      addGuards(e.pointerType)
     }
   }
 
@@ -336,17 +387,37 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
       const [x, y] = toCss(e.clientX, e.clientY)
       moveEraser(x, y)
     }
-    if (!g || g.pointerId !== e.pointerId) return
+    if (!g || g.pointerId !== e.pointerId) {
+      // Movement of the resting hand during a pen stroke: not a pan, not a swipe.
+      if (g && g.pointerType === 'pen' && e.pointerType === 'touch') e.stopPropagation()
+      return
+    }
     e.stopPropagation()
     const native = e.nativeEvent
     const events = typeof native.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : null
     const list = events && events.length ? events : [native]
 
     if (g.kind === 'stroke') {
+      const usePressure = !!g.stroke.pressures
       for (const ev of list) {
         const [x, y] = toCss(ev.clientX, ev.clientY)
         const [px, py] = viewport.convertToPdfPoint(x, y)
-        appendPoint(g.stroke, px, py)
+        let pressure = null
+        if (usePressure) {
+          const raw = pressureOf(ev) ?? g.pressure ?? 0.5
+          g.pressure = g.pressure == null ? raw : g.pressure + (raw - g.pressure) * PRESSURE_SMOOTHING
+          pressure = g.pressure
+        }
+        appendPoint(g.stroke, px, py, pressure)
+      }
+      if (typeof native.getPredictedEvents === 'function') {
+        const predicted = native.getPredictedEvents()
+        g.predicted = predicted.length
+          ? predicted.slice(0, PREDICTED_POINTS).map((ev) => {
+              const [x, y] = toCss(ev.clientX, ev.clientY)
+              return viewport.convertToPdfPoint(x, y)
+            })
+          : null
       }
       schedulePaintLive()
     } else if (g.kind === 'erase') {
@@ -361,7 +432,10 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
 
   const finish = (e, cancelled = false) => {
     const g = gestureRef.current
-    if (!g || g.pointerId !== e.pointerId) return
+    if (!g || g.pointerId !== e.pointerId) {
+      if (g && g.pointerType === 'pen' && e.pointerType === 'touch') e.stopPropagation()
+      return
+    }
     e.stopPropagation()
     try {
       e.currentTarget.releasePointerCapture(e.pointerId)
@@ -373,7 +447,7 @@ export function AnnotationLayer({ viewport, tool = 'none', toolSettings, penOnly
       if (!cancelled) {
         const [x, y] = toCss(e.clientX, e.clientY)
         const [px, py] = viewport.convertToPdfPoint(x, y)
-        appendPoint(g.stroke, px, py)
+        appendPoint(g.stroke, px, py, g.stroke.pressures ? g.pressure : null)
       }
       // A cancelled gesture (e.g. the OS stole the pointer) still keeps what was drawn.
       if (g.stroke.points.length >= 2) {

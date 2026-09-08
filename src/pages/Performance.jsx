@@ -1,14 +1,18 @@
 // Concert mode: a whole setlist, page by page, on a dark full-screen stage.
+//
+// Pages come from the device's image cache, so a page turn is an <img> swap – no
+// PDF work at all. The current score's pages are prepared first, then the next
+// and the previous score in the setlist. Background sync is paused while on stage.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { X, Pen, BookOpen, CalendarDays, Music } from 'lucide-react'
 import { getProject, getProjectSetlist } from '../db/db.js'
-import { usePdfDocument } from '../hooks/usePdfDocument.js'
 import { useOfflineFile } from '../hooks/useOfflineFile.js'
 import { useSync } from '../lib/sync/useSync.js'
 import { useSetting } from '../hooks/useSetting.js'
 import { useWakeLock } from '../hooks/useWakeLock.js'
+import { prepareScore, PRIORITY } from '../lib/pageCache.js'
 import { IconButton, Button, EmptyState, Spinner, TopBar, useToast, cn } from '../components/ui/index.js'
 import { ScoreStage } from '../components/viewer/ScoreStage.jsx'
 import { DownloadProgress } from '../components/viewer/DownloadNeeded.jsx'
@@ -32,6 +36,10 @@ function PerformanceInner({ projectId }) {
   const [searchParams] = useSearchParams()
   const project = useLiveQuery(() => getProject(projectId), [projectId], null)
   const setlist = useLiveQuery(() => getProjectSetlist(projectId), [projectId], null)
+
+  // Nothing talks to the cloud while the singer is on stage.
+  const { suspendSync } = sync
+  useEffect(() => suspendSync?.('performance'), [suspendSync])
 
   // Flat sequence of { scoreId, displayIndex } plus lookup tables.
   const { sequence, scores, starts } = useMemo(() => {
@@ -58,12 +66,17 @@ function PerformanceInner({ projectId }) {
   const scoreNumber = cur ? [...starts.keys()].indexOf(cur.scoreId) + 1 : 0
   const pageCount = score?.pageOrder?.length || 0
 
-  // Prefetch the next score's document.
+  // Neighbouring scores in the setlist (prepared ahead of time).
   const nextScoreId = useMemo(() => {
     if (!cur) return null
     for (let i = idx + 1; i < total; i++) if (sequence[i].scoreId !== cur.scoreId) return sequence[i].scoreId
     return null
   }, [cur, idx, total, sequence])
+  const prevScoreId = useMemo(() => {
+    if (!cur) return null
+    for (let i = idx - 1; i >= 0; i--) if (sequence[i].scoreId !== cur.scoreId) return sequence[i].scoreId
+    return null
+  }, [cur, idx, sequence])
   const nextStart = nextScoreId ? (starts.get(nextScoreId) ?? null) : null
 
   // Cloud-only scores: the current one is fetched on demand when reached (whatever the
@@ -71,10 +84,26 @@ function PerformanceInner({ projectId }) {
   const onDownloadError = useCallback((message) => toast.error(message), [toast])
   const offline = useOfflineFile(cur?.scoreId ?? null, { auto: true, onError: onDownloadError })
   const nextOffline = useOfflineFile(nextScoreId)
+  const prevOffline = useOfflineFile(prevScoreId)
   const cloudOnly = !!cur && !!score && offline.cloudOnly
   const canOpen = !!cur && !offline.loading && !offline.cloudOnly
-  const { doc, error: docError, loading: docLoading } = usePdfDocument(canOpen ? cur.scoreId : null, offline.version)
-  usePdfDocument(nextScoreId && nextOffline.ready ? nextScoreId : null, nextOffline.version)
+  const [openError, setOpenError] = useState(null)
+  const curScoreId = cur?.scoreId ?? null
+  // A new score gets a clean slate for the open error (derived, not in an effect).
+  const [errorFor, setErrorFor] = useState(null)
+  if (errorFor !== curScoreId) {
+    setErrorFor(curScoreId)
+    setOpenError(null)
+  }
+
+  // Page images for the neighbouring scores, so their first pages are instant too.
+  useEffect(() => {
+    if (nextScoreId && nextOffline.ready) prepareScore(nextScoreId, PRIORITY.nextScore)
+  }, [nextScoreId, nextOffline.ready])
+  useEffect(() => {
+    if (prevScoreId && prevOffline.ready) prepareScore(prevScoreId, PRIORITY.nextScore)
+  }, [prevScoreId, prevOffline.ready])
+
   // Online and signed in: the download starts right away – show progress rather than flashing the message.
   const awaitingDownload = sync.online && !offline.error && (sync.authLoading || (sync.cloudReady && !!sync.user))
   const unavailableMessage = !sync.online ? 'Inte nedladdad – hoppa över' : !sync.user ? 'Logga in för att ladda ner stycket' : offline.error || 'Inte nedladdad – hoppa över'
@@ -96,7 +125,7 @@ function PerformanceInner({ projectId }) {
   }, [])
   const [zoom, setZoom] = useState(1)
   const onSaveError = useCallback(() => toast.error('Anteckningen kunde inte sparas. Försök igen.'), [toast])
-  const editor = useAnnotationEditor(score?.id ?? null, score && cur ? (score.pageOrder || [])[cur.displayIndex] ?? null : null, { onSaveError })
+  const editor = useAnnotationEditor(score?.id ?? null, score && cur ? ((score.pageOrder || [])[cur.displayIndex] ?? null) : null, { onSaveError })
 
   // ── Navigation across the whole setlist ──────────────────────────────
   const goTo = (i) => {
@@ -122,7 +151,6 @@ function PerformanceInner({ projectId }) {
 
   // ── Title overlay (shown for a moment when the score changes) ────────
   const [titleShownFor, setTitleShownFor] = useState(null)
-  const curScoreId = cur?.scoreId ?? null
   useEffect(() => {
     if (!curScoreId) return
     const t = setTimeout(() => setTitleShownFor(curScoreId), TITLE_MS)
@@ -224,7 +252,7 @@ function PerformanceInner({ projectId }) {
 
       {/* Stage */}
       <div className="relative min-h-0 flex-1">
-        {(cur && offline.loading) || (docLoading && !docError) ? (
+        {cur && offline.loading ? (
           <div className="absolute inset-0 flex items-center justify-center text-gold-300" role="status" aria-label="Laddar noter">
             <Spinner className="size-9" />
           </div>
@@ -265,21 +293,21 @@ function PerformanceInner({ projectId }) {
             </div>
           </div>
         ) : null}
-        {docError ? (
-          <EmptyState icon={Music} title="Kunde inte öppna noterna" description={docError} className="absolute inset-0">
+        {openError ? (
+          <EmptyState icon={Music} title="Kunde inte öppna noterna" description={openError} className="absolute inset-0">
             <Button variant="secondary" onClick={() => (idx < total - 1 ? goTo(idx + 1) : exit())}>
               {idx < total - 1 ? 'Hoppa till nästa stycke' : 'Avsluta'}
             </Button>
           </EmptyState>
         ) : null}
-        {score && doc && !docError ? (
+        {score && canOpen && !openError ? (
           <ScoreStage
             key={score.id}
             className="absolute inset-y-0 left-[env(safe-area-inset-left)] right-[env(safe-area-inset-right)]"
             testId="performance-stage"
             scoreId={score.id}
             score={score}
-            doc={doc}
+            onOpenError={setOpenError}
             displayIndex={cur.displayIndex}
             onNavigate={onStageNavigate}
             allowOverflow

@@ -17,6 +17,9 @@
 //   projectScores { id, projectId, scoreId, position, updatedAt, ownerId, dirty }
 //   settings      { key, value }
 //   tombstones    { id (auto), table, key, ownerId, deletedAt }   deletions waiting to be pushed
+//   pageImages    { scoreId, pageIndex, fileVersion, rotation, longEdge, width, height, size,
+//                   viewBox, userUnit, rotate, createdAt }   metadata of a pre-rendered page (JPEG)
+//   pageImageBlobs{ scoreId, pageIndex, data:ArrayBuffer }   the JPEG bytes (device cache, never synced)
 //
 // Sync model: `ownerId` is the account a row belongs to (null = only on this
 // device). Every local write sets `dirty = 1`; the sync engine pushes dirty
@@ -99,8 +102,6 @@ db.version(3)
       })
   })
 
-export const now = () => Date.now()
-
 export const ROTATIONS = [0, 90, 180, 270]
 
 export function normalizeRotation(deg) {
@@ -108,6 +109,13 @@ export function normalizeRotation(deg) {
   return r
 }
 
+// v4: pre-rendered page images (a device-local cache – regenerable, never exported).
+db.version(4).stores({
+  pageImages: '[scoreId+pageIndex], scoreId',
+  pageImageBlobs: '[scoreId+pageIndex], scoreId',
+})
+
+export const now = () => Date.now()
 // ── Sync context ────────────────────────────────────────────────────────────
 // The signed-in account id. New rows are created for this owner and deletions
 // of owned rows leave tombstones. Set by the auth layer; null when signed out.
@@ -132,6 +140,29 @@ function emitDirty(table) {
 async function addTombstone(table, key, ownerId) {
   if (!ownerId) return
   await db.tombstones.add({ table, key, ownerId, deletedAt: now() })
+}
+
+/** Drop every cached page image of a score (must run inside or outside a transaction that covers both cache tables). */
+export async function dropPageImages(scoreId) {
+  await db.pageImages.where('scoreId').equals(scoreId).delete()
+  await db.pageImageBlobs.where('scoreId').equals(scoreId).delete()
+}
+
+/** Bytes used by cached page images on this device. */
+export async function pageCacheBytes() {
+  let sum = 0
+  await db.pageImages.each((m) => {
+    sum += m.size || 0
+  })
+  return sum
+}
+
+/** Remove every cached page image (they are rebuilt on demand). */
+export async function clearPageCache() {
+  await db.transaction('rw', db.pageImages, db.pageImageBlobs, async () => {
+    await db.pageImages.clear()
+    await db.pageImageBlobs.clear()
+  })
 }
 
 // ── Scores ──────────────────────────────────────────────────────────────────
@@ -231,11 +262,12 @@ export async function touchScoreOpened(id) {
  */
 export async function replaceScoreFile(id, { pdfBytes, pageCount, pageOrder, rotations, thumb }) {
   if (!(pdfBytes instanceof ArrayBuffer)) throw new TypeError('pdfBytes must be an ArrayBuffer')
-  await db.transaction('rw', db.scores, db.files, async () => {
+  await db.transaction('rw', db.scores, db.files, db.pageImages, db.pageImageBlobs, async () => {
     const score = await db.scores.get(id)
     if (!score) throw new Error('Stycket finns inte längre.')
     const file = await db.files.get(id)
     const fileVersion = (score.fileVersion || 0) + 1
+    await dropPageImages(id)
     await db.files.put({
       id,
       data: pdfBytes,
@@ -266,9 +298,10 @@ export async function replaceScoreFile(id, { pdfBytes, pageCount, pageOrder, rot
 
 /** Store downloaded PDF bytes for a cloud score (does not mark anything dirty). */
 export async function storeDownloadedFile(id, pdfBytes, version) {
-  await db.transaction('rw', db.scores, db.files, async () => {
+  await db.transaction('rw', db.scores, db.files, db.pageImages, db.pageImageBlobs, async () => {
     const score = await db.scores.get(id)
     if (!score) return
+    await dropPageImages(id)
     await db.files.put({ id, data: pdfBytes, mime: 'application/pdf', size: pdfBytes.byteLength, name: '', version })
     await db.scores.update(id, { remoteFileVersion: version, fileVersion: version, fileSize: pdfBytes.byteLength })
   })
@@ -276,14 +309,18 @@ export async function storeDownloadedFile(id, pdfBytes, version) {
 
 /** Remove the offline copy of a score (the cloud copy stays). */
 export async function removeDownload(id) {
-  await db.files.delete(id)
+  await db.transaction('rw', db.files, db.pageImages, db.pageImageBlobs, async () => {
+    await db.files.delete(id)
+    await dropPageImages(id)
+  })
 }
 
 export async function deleteScore(id) {
-  await db.transaction('rw', db.scores, db.files, db.annotations, db.projectScores, db.tombstones, async () => {
+  await db.transaction('rw', db.scores, db.files, db.annotations, db.projectScores, db.tombstones, db.pageImages, db.pageImageBlobs, async () => {
     const score = await db.scores.get(id)
     await db.scores.delete(id)
     await db.files.delete(id)
+    await dropPageImages(id)
     await db.annotations.where('scoreId').equals(id).delete()
     const links = await db.projectScores.where('scoreId').equals(id).toArray()
     await db.projectScores.bulkDelete(links.map((l) => l.id))
@@ -501,6 +538,7 @@ export async function countScoresInProjects() {
 
 export const DEFAULT_SETTINGS = {
   penOnly: false, // only accept Apple Pencil / stylus input when drawing
+  penOnlyChosen: false, // the user decided about penOnly (otherwise it turns on when a stylus is first used)
   keepAwake: true, // request a screen wake lock while viewing
   fitMode: 'page', // 'page' | 'width'
   enhanceScans: true, // grayscale + contrast for camera captures
@@ -579,7 +617,10 @@ export async function clearUserData(userId) {
   await db.transaction('rw', db.tables, async () => {
     const scoreIds = await db.scores.where('ownerId').equals(userId).primaryKeys()
     await db.files.bulkDelete(scoreIds)
-    for (const id of scoreIds) await db.annotations.where('scoreId').equals(id).delete()
+    for (const id of scoreIds) {
+      await db.annotations.where('scoreId').equals(id).delete()
+      await dropPageImages(id)
+    }
     await db.scores.bulkDelete(scoreIds)
     await db.projectScores.where('ownerId').equals(userId).delete()
     await db.projects.where('ownerId').equals(userId).delete()
@@ -612,3 +653,5 @@ export async function clearAllData() {
 }
 
 export const TABLE_NAMES = ['scores', 'files', 'annotations', 'projects', 'projectScores', 'settings']
+/** Device-only caches: cleared together with the content tables, never exported. */
+export const CACHE_TABLE_NAMES = ['pageImages', 'pageImageBlobs']

@@ -14,15 +14,21 @@ in. Du väljer själv vilka stycken som ska laddas ner för offline-bruk.
 | Klientkod | `src/lib/sync/` (engine, Supabase-klient, fejkat moln för tester), `src/components/account/`, `src/pages/Account.jsx` |
 
 **Synkmodell.** Alla lokala skrivningar sätter `dirty = 1`; borttagningar av rader som
-tillhör ett konto lämnar en *tombstone*. Motorn (`engine.js`) kör vid inloggning, när
-enheten går online, när fliken blir synlig, en minut efter senaste körning och 1,5 s
-efter varje lokal ändring:
+tillhör ett konto lämnar en *tombstone*. Molnet kontaktas bara för att skicka upp det som
+ändrats här och för att hämta det du ber om – aldrig i bakgrunden på ett schema, och aldrig
+medan konsertläget är öppet (synken pausas där och körs när du lämnar scenen):
 
-1. skickar tombstones som mjuka raderingar (`deleted_at`) och tar bort filer i Storage,
-2. laddar upp ändrade rader (PDF och tumnagel först om deras versionsnummer ökat),
-3. hämtar allt som ändrats sedan förra körningen (`synced_at`, serverklocka, med 5 s
-   överlapp) och tillämpar det med *last-write-wins* per rad enligt klientens `updatedAt`,
-4. hämtar saknade tumnaglar och uppdaterar nedladdade PDF:er som ändrats på en annan enhet.
+* **Push** (bara uppladdning) körs 5 s efter den senaste lokala ändringen och när enheten
+  går online igen: tombstones som mjuka raderingar (`deleted_at`) plus borttagning av filer
+  i Storage, sedan ändrade rader (PDF och tumnagel först om deras versionsnummer ökat).
+* **Full synk** (push + hämtning) körs vid inloggning/appstart och när du trycker
+  »Synka nu«: hämtar allt som ändrats sedan förra körningen (`synced_at`, serverklocka,
+  med 5 s överlapp) och tillämpar det med *last-write-wins* per rad enligt klientens
+  `updatedAt`, hämtar saknade tumnaglar och uppdaterar nedladdade PDF:er som ändrats på
+  en annan enhet.
+* Varje databasanrop har 20 s tidsgräns, så ett dåligt konsertnät kan aldrig hänga en synk.
+
+Offline gör motorn ingenting alls; ändringar väntar i `dirty`/`tombstones` tills nästa push.
 
 **Offline.** Ett stycke är nedladdat när dess PDF finns i tabellen `files` på enheten.
 Stycken som bara finns i molnet visas med en molnikon i biblioteket och laddas ner

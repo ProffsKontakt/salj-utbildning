@@ -6,7 +6,6 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { BookOpen, Pen, LayoutGrid, NotebookPen, MoreVertical, ListOrdered, Info, FolderPlus, FileDown, Trash2, Library, Music, Cloud } from 'lucide-react'
 import { db, deleteScore, getSetting, setSetting, touchScoreOpened, updateScore } from '../db/db.js'
 import { invalidateScoreDocument } from '../lib/pdf.js'
-import { usePdfDocument } from '../hooks/usePdfDocument.js'
 import { useOfflineFile } from '../hooks/useOfflineFile.js'
 import { useSync } from '../lib/sync/useSync.js'
 import { useSetting } from '../hooks/useSetting.js'
@@ -54,13 +53,12 @@ function ScoreViewerInner({ scoreId }) {
   const onDownloadError = useCallback((message) => toast.error(message), [toast])
   const offline = useOfflineFile(scoreId, { onError: onDownloadError })
   const cloudOnly = !!score && offline.cloudOnly
-  // Open the document once the local check is done and the file is not cloud-only
+  // Show the stage once the local check is done and the file is not cloud-only
   // (a device-only score without a file still surfaces the usual open error).
   const canOpen = !!score && !offline.loading && !offline.cloudOnly
-
-  // Reload the document when the page manager replaced the file bytes or a download landed.
-  const version = score ? `${score.pageCount}:${score.fileSize || 0}:${offline.version}` : 0
-  const { doc, error: docError, loading: docLoading } = usePdfDocument(canOpen ? scoreId : null, version)
+  // The stage shows cached page images and opens the PDF itself only when it must;
+  // it reports when the current page can be shown neither way.
+  const [openError, setOpenError] = useState(null)
 
   const pageOrder = useMemo(() => score?.pageOrder || [], [score])
   const count = pageOrder.length
@@ -232,7 +230,7 @@ function ScoreViewerInner({ scoreId }) {
       <div className="flex min-h-0 flex-1">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="relative min-h-0 flex-1">
-            {loadingScore || (score && offline.loading) || (canOpen && docLoading && !docError) ? (
+            {loadingScore || (score && offline.loading) ? (
               <div className="absolute inset-0 flex items-center justify-center text-gold-300" role="status">
                 <Spinner className="size-9" />
                 <span className="sr-only">Laddar noter…</span>
@@ -241,15 +239,15 @@ function ScoreViewerInner({ scoreId }) {
 
             {cloudOnly ? <DownloadNeeded score={score} offline={offline} className="absolute inset-0 overflow-y-auto" /> : null}
 
-            {score && docError ? (
-              <EmptyState icon={Music} title="Kunde inte öppna noterna" description={docError} className="absolute inset-0">
+            {score && openError ? (
+              <EmptyState icon={Music} title="Kunde inte öppna noterna" description={openError} className="absolute inset-0">
                 <Button as={Link} to="/" variant="secondary">
                   Till biblioteket
                 </Button>
               </EmptyState>
             ) : null}
 
-            {score && !docError && !cloudOnly && count === 0 ? (
+            {score && !openError && !cloudOnly && count === 0 ? (
               <EmptyState icon={ListOrdered} title="Inga sidor kvar" description="Alla sidor i stycket har tagits bort. Lägg till sidor igen i sidhanteraren." className="absolute inset-0">
                 <Button as={Link} to={`/noter/${scoreId}/sidor`}>
                   Ordna sidor
@@ -257,12 +255,12 @@ function ScoreViewerInner({ scoreId }) {
               </EmptyState>
             ) : null}
 
-            {score && doc && count > 0 ? (
+            {score && canOpen && !openError && count > 0 ? (
               <ScoreStage
                 className="absolute inset-y-0 left-[env(safe-area-inset-left)] right-[env(safe-area-inset-right)]"
                 scoreId={scoreId}
                 score={score}
-                doc={doc}
+                onOpenError={setOpenError}
                 displayIndex={idx}
                 onNavigate={navigateTo}
                 tool={tool}
@@ -325,9 +323,9 @@ function ScoreViewerInner({ scoreId }) {
             </div>
           ) : null}
 
-          {showThumbs && score && doc && count > 0 ? (
+          {showThumbs && score && canOpen && count > 0 ? (
             <div className="pb-safe shrink-0 border-t border-ivory-50/8 bg-ink-900/90 backdrop-blur">
-              <ThumbStrip doc={doc} pageOrder={pageOrder} rotations={score.rotations || {}} displayIndex={idx} onSelect={navigateTo} />
+              <ThumbStrip scoreId={scoreId} score={score} pageOrder={pageOrder} rotations={score.rotations || {}} displayIndex={idx} onSelect={navigateTo} />
             </div>
           ) : null}
         </div>
@@ -348,7 +346,7 @@ function ScoreViewerInner({ scoreId }) {
 
       <ScoreInfoDialog open={infoOpen} onClose={() => setInfoOpen(false)} score={score || null} />
       <AddToProjectDialog open={addOpen} onClose={() => setAddOpen(false)} scoreIds={[scoreId]} />
-      <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} score={score || null} doc={doc} />
+      <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} score={score || null} />
       <ConfirmDialog
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}

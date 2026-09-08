@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { MoreVertical, Music, BookOpen, ListOrdered, FolderPlus, Pencil, Trash2, Cloud, CloudDownload, Smartphone } from 'lucide-react'
 import { useObjectUrl } from '../../hooks/useObjectUrl.js'
+import { usePageCacheStatus } from '../../lib/pageCache.js'
 import { pluralize } from '../../lib/format.js'
 import { IconButton, Menu, Spinner } from '../ui/index.js'
 import { cn } from '../ui/cn.js'
@@ -39,6 +40,8 @@ export const ScoreCard = memo(function ScoreCard({
   const cloud = !!score.ownerId
   const cloudOnly = cloud && !downloaded
   const deviceOnly = !cloud && signedIn
+  // Pages are being pre-rendered for instant viewing (after import/download).
+  const preparing = usePageCacheStatus(score.id)
 
   const openLabel = `Öppna ${score.title}${downloading ? ' (laddar ner)' : cloudOnly ? ' (i molnet, inte nedladdad)' : deviceOnly ? ' (bara på den här enheten)' : ''}`
 
@@ -69,6 +72,11 @@ export const ScoreCard = memo(function ScoreCard({
           {downloading ? (
             <span className={cn(BADGE, 'size-7 text-gold-300')} title="Laddar ner…" data-testid="score-badge-downloading" aria-hidden="true">
               <Spinner className="size-4" />
+            </span>
+          ) : preparing && preparing.total > 1 ? (
+            <span className={cn(BADGE, 'gap-1.5 px-2 py-0.5 text-[11px] font-medium text-ivory-200 tabular-nums')} title="Sidorna förbereds för snabb visning" data-testid="score-badge-preparing" aria-hidden="true">
+              <Spinner className="size-3" />
+              {preparing.done}/{preparing.total}
             </span>
           ) : cloudOnly ? (
             <span className={cn(BADGE, 'size-7')} title="I molnet – inte nedladdad" data-testid="score-badge-cloud" aria-hidden="true">

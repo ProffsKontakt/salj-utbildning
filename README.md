@@ -5,9 +5,10 @@ på iPad, iPhone, Android och dator.
 
 - **Skanna eller importera** noter (kamera, bilder, PDF). Bilder blir automatiskt PDF.
 - **Projekt** för varje konsert med sorterbar setlista och ett **konsertläge** som bläddrar
-  genom alla stycken sida för sida.
-- **Annotera** direkt på noterna: penna, överstrykning, radera, textanteckningar,
-  sidanteckningar. Anteckningarna följer med vid zoom och rotation och bakas in vid export.
+  genom alla stycken sida för sida – sidorna är förrenderade så varje bläddring är omedelbar.
+- **Annotera** direkt på noterna: tryckkänslig penna (Apple Pencil), överstrykning, radera,
+  textanteckningar, sidanteckningar. Handen på skärmen ignoreras medan pennan ritar.
+  Anteckningarna följer med vid zoom och rotation och bakas in vid export.
 - **Ordna sidor**: dra och släpp, rotera, göm och återställ sidor, lägg till fler sidor.
 - **Exportera** PDF (med eller utan anteckningar) och **säkerhetskopiera** hela biblioteket.
 

@@ -20,6 +20,7 @@ const DROP_ANIMATION = { duration: 180, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)'
 /**
  * @param {object} p
  * @param {object|null} p.doc
+ * @param {object|null} [p.score]  score record (cached page images)
  * @param {number[]} p.order              source indices in display order
  * @param {Record<number,number>} p.rotations
  * @param {{current: Element|null}} p.scrollRoot
@@ -29,7 +30,7 @@ const DROP_ANIMATION = { duration: 180, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)'
  * @param {(srcIndex:number)=>boolean} p.onRemove
  * @param {boolean} [p.disabled]
  */
-export function PageGrid({ doc, order, rotations, scrollRoot, onReorder, onMove, onRotate, onRemove, disabled = false }) {
+export function PageGrid({ doc, score = null, order, rotations, scrollRoot, onReorder, onMove, onRotate, onRemove, disabled = false }) {
   const gridRef = useRef(null)
   const { width: gridWidth } = useElementSize(gridRef)
   const cols = gridWidth ? Math.max(2, Math.min(MAX_COLS, Math.floor((gridWidth + GAP) / (MIN_COL + GAP)))) : 2
@@ -144,6 +145,7 @@ export function PageGrid({ doc, order, rotations, scrollRoot, onReorder, onMove,
             <PageTile
               key={srcIndex}
               doc={doc}
+              score={score}
               srcIndex={srcIndex}
               position={position}
               total={total}
@@ -161,7 +163,7 @@ export function PageGrid({ doc, order, rotations, scrollRoot, onReorder, onMove,
         </ol>
       </SortableContext>
       <DragOverlay dropAnimation={DROP_ANIMATION} zIndex={60}>
-        {activeSrc !== null && activePosition >= 0 ? <TilePreview doc={doc} srcIndex={activeSrc} position={activePosition} rotation={rotations[activeSrc] || 0} width={tileWidth} /> : null}
+        {activeSrc !== null && activePosition >= 0 ? <TilePreview doc={doc} score={score} srcIndex={activeSrc} position={activePosition} rotation={rotations[activeSrc] || 0} width={tileWidth} /> : null}
       </DragOverlay>
     </DndContext>
   )
